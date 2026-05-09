@@ -1,0 +1,30 @@
+[project]
+name = "hazrakah"
+version = "0.0.0"
+description = "..a tiny but powerful DI library for Python."
+keywords = ["DI", "dependency injection"]
+authors = [
+    { name="Shaun Wilson", email="mrshaunwilson@msn.com" }
+]
+readme = "README.md"
+license = "MIT"
+classifiers = [
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Topic :: Software Development :: Libraries :: Python Modules"
+]
+requires-python = ">=3.11"
+dependencies = [
+]
+
+[project.optional-dependencies]
+dev = [
+    "coverage",
+    "mypy",
+    "punit (>=1.4)",
+    "twine"
+]
+
+[tool.setuptools.package-data]
+"hazrakah" = ["py.typed"]

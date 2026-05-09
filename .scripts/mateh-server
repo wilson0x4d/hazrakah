@@ -1,0 +1,8 @@
+#!/usr/bin/env python
+# SPDX-FileCopyrightText: © 2026 Shaun Wilson
+# SPDX-License-Identifier: MIT
+##
+from subprocess import run
+from sys import executable, argv, exit
+result = run([ executable, '-m', 'hazrakah', 'server' ] + argv[1:], check=False)
+exit(result.returncode)

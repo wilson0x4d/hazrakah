@@ -1,0 +1,28 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: © 2026 Shaun Wilson
+# SPDX-License-Identifier: MIT
+##
+set -eo pipefail
+
+DESTROY_VENV=0
+if [ ! -e ".venv" ]; then
+    DESTROY_VENV=1
+    . .scripts/init-venv
+fi
+if [ -z "$VIRTUAL_ENV" ]; then
+    . .venv/bin/activate
+fi
+
+mypy src
+MYPYPATH=src mypy --namespace-packages --explicit-package-bases tests
+PYTHONPATH=src coverage run -m punit --trait '!integration' --trait '!hardcoded' --trait '!longrunning' --trait '!manual' "$@"
+coverage report
+
+if [ "$DESTROY_VENV" == "1" ]; then
+    # the venv is destroyed when it didn't previously exist
+    # to facilitate CI/CD runs without trashing the repo
+    # snapshot with a "CI-venv" (which conflicts with "Container-venv"
+    # once the repo assets are copied in.)
+    deactivate
+    rm -rf .venv
+fi

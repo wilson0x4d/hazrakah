@@ -1,0 +1,42 @@
+name: "build"
+on:
+  workflow_dispatch:
+  workflow_call:
+  push:
+    branches:
+      - main
+    paths:
+      - '.gitea/workflows/pipeline.yaml'
+      - 'src/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+jobs:
+  package-and-deploy:
+    name: "Package & Deploy"
+    runs-on: builder-py311
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: "Configure"
+        id: configure-build
+        run: |
+          export SEMVER=$(conventional-semver)
+          echo "SEMVER=$SEMVER" >> "$GITHUB_ENV"
+          echo "PYPI_REPO=${{ vars.PYPI_REPO }}" >> "$GITHUB_ENV"
+          PYTHON_VERSION=3.11 .scripts/init-venv
+      - name: "Test"
+        id: run-tests
+        run: |
+          .scripts/run-tests
+      - name: "Package"
+        id: build-package
+        run: |
+          .scripts/build-package
+      - name: "Deploy"
+        id: deploy-package
+        run: |
+          .scripts/deploy-package
+          emit-context "success" "SEMVER" "${{ gitea.api_url }}" "${{ gitea.repository }}" "${{ gitea.sha }}" "${{ secrets.GITEA_TOKEN }}" "$SEMVER"
+          git tag "$SEMVER"
+          git push origin "$SEMVER"

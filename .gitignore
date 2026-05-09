@@ -1,0 +1,17 @@
+*mypy*/
+*pycache*/
+.vscode/
+*venv*/
+build/
+dist/
+*.egg-info/
+docs/_build/
+generated/
+.DS_Store
+*report*.*ml
+/requirement*.txt
+test_data/
+tmp/
+.coverage
+*cov/
+*.jwk
