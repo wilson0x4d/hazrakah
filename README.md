@@ -1,7 +1,7 @@
 
 [![hazrakah on PyPI](https://img.shields.io/pypi/v/hazrakah.svg)](https://pypi.org/project/hazrakah/) [![hazrakah on readthedocs](https://readthedocs.org/projects/hazrakah/badge/?version=latest)](https://hazrakah.readthedocs.io)
 
-**hazrakah** (הזרקה) is a tiny but powerful DI implementation for Python.
+**hazrakah** (הזרקה) is a tiny but powerful DI library for Python.
 
 This README is only a high-level introduction to **hazrakah**. For more detailed documentation, please view the official docs at [https://hazrakah.readthedocs.io](https://hazrakah.readthedocs.io).
 
@@ -9,9 +9,9 @@ This README is only a high-level introduction to **hazrakah**. For more detailed
 ## Features
 
 - Supports Transient, Scoped, Singleton and Instance registrations.
-- Registration targets can be a concrete type or a factories.
-- Scopes are hierarchical.
-- Container is mutable byd efault, but can be frozen.
+- Registration targets can be a concrete type or a factory.
+- Scopes are hierarchical, and scoped registrations are isolated to each scope.
+- Container is mutable by default, but can be frozen on-demand.
 
 ## Installation
 

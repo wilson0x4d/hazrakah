@@ -9,7 +9,7 @@ Overview
    :target: https://hazrakah.readthedocs.io
    :alt: hazrakah on Read the Docs
 
-**hazrakah** (הזרקה) is a tiny but powerful DI implementation for Python.
+**hazrakah** (הזרקה) is a tiny but powerful DI library for Python.
 
 Features
 --------
@@ -17,7 +17,7 @@ Features
 - Supports Transient, Scoped, Singleton and Instance registrations.
 - Registration targets can be a concrete type or a factory function.
 - Scopes are hierarchical, and scoped registrations are isolated to each scope.
-- Container is mutable byd efault, but can be frozen.
+- Container is mutable by default, but can be frozen on-demand.
 
 Contents
 --------
