@@ -5,11 +5,15 @@ from __future__ import annotations
 
 from abc import ABC
 from hazrakah import Container
-from typing import TypeVar
+from typing import Protocol, TypeVar
 from punit import fact
 from punit.assertions.exceptions import raises
 
 _T = TypeVar('_T')
+
+
+class ProtocolDroid(Protocol):
+    ...
 
 
 class IService(ABC):
@@ -141,6 +145,17 @@ def nonexistent_registration_when_abstract_must_fail() -> None:
 
     assert raises[KeyError](
         lambda: container.resolve(IService),
+        exact=True
+    ), 'Expected KeyError for an unknown registration of an abstract type.'
+
+
+@fact
+def nonexistent_registration_when_protocol_must_fail() -> None:
+    """Attempting to resolve an unregistered abstract raises ``KeyError``."""
+    container: Container = Container()
+
+    assert raises[KeyError](
+        lambda: container.resolve(ProtocolDroid),
         exact=True
     ), 'Expected KeyError for an unknown registration of an abstract type.'
 

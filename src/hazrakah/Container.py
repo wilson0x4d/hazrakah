@@ -182,10 +182,10 @@ class Container:
         if get_origin(t) is not None:
             return False
 
-        if not inspect.isclass(t):
+        if not isinstance(t, type):
             return False
 
-        if issubclass(t, Protocol):
+        if issubclass(t, Protocol):  # type: ignore[arg-type]
             return False
 
         if inspect.isabstract(t) or (hasattr(t, '__bases__') and ABC in t.__bases__):
