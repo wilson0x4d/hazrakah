@@ -3,17 +3,22 @@
 
 from __future__ import annotations
 
+from abc import ABC
 from enum import IntEnum
 import inspect
+import sys
 from typing import (
+    _SpecialForm,
     Any,
     Callable,
     Optional,
+    Protocol,
     Type,
     TypeAlias,
     TypeVar,
     Union,
     cast,
+    get_origin,
     overload
 )
 
@@ -89,12 +94,12 @@ class Registration:
 
 class Container:
 
-    __frozen:bool
+    __frozen: bool
     __singletons: dict[Type[Any], Any]
     __outer_scope: Optional[Container]
     __registrations: dict[Type[Any], Registration]
 
-    def __init__(self, outer_scope: Optional[Container] = None, frozen:Optional[bool] = False) -> None:
+    def __init__(self, outer_scope: Optional[Container] = None, frozen: bool = False) -> None:
         super().__setattr__('__frozen', False)
         self.__singletons = {}
         self.__outer_scope = outer_scope
@@ -124,10 +129,15 @@ class Container:
             globals_ = getattr(owner, '__globals__', {})
             if not globals_:
                 globals_ = globals()
-            return eval(annotation, globals_, {})
+            try:
+                return eval(annotation, globals_, {})
+            except Exception:
+                mod = sys.modules[owner.__module__]
+                if hasattr(mod, annotation):
+                    return getattr(mod, annotation)
         return annotation
 
-    def __check_frozen(self, t:Type[T]) -> None:
+    def __check_frozen(self, t: Type[T]) -> None:
         """
         Checks if the container is frozen, if frozen blocks registration by raising ``RegistrationError``.
 
@@ -152,22 +162,47 @@ class Container:
         if t is not registration.t:
             raise RegistrationError(f'Type mismatch in registration for {t!r}')
         if registration.target is None:
-            raise RegistrationError(f'creating instances from targetless registrations is not supported')
+            raise RegistrationError('creating instances from targetless registrations is not supported')
         if isinstance(registration.target, type):
             return self.__resolve(cast(Type[T], registration.target))
         else:
             factory = cast(Factory, registration.target)
             return factory(self)
 
-    def __resolve(self, t: type[T]) -> T:
+    def __is_concrete(self, t: Type[Any]) -> bool:
         """
-        Resolves the target type *t* according to registrations.
+        Return ``True`` if *t* represents a concrete, instantiable class.
+        """
+        if isinstance(t, _SpecialForm):
+            return False
 
-        :param t: The type to solve for.
-        :raises TypeError: When *t* is not a class-type, and does not support construction.
-        :raises TypeError: When any parameter of *t*'s ctor lacks necessary typing.
-        :return: _description_
-        """
+        if isinstance(t, TypeVar):
+            return False
+
+        if get_origin(t) is not None:
+            return False
+
+        if not inspect.isclass(t):
+            return False
+
+        if issubclass(t, Protocol):
+            return False
+
+        if inspect.isabstract(t) or (hasattr(t, '__bases__') and ABC in t.__bases__):
+            return False
+
+        return True
+
+    def __register_transient(self, t: Type[Any], target: Optional[Target] = None) -> None:
+        if target is None:
+            target = t
+        self.__registrations[t] = Registration(
+            t=t,
+            lifetime=Lifetime.TRANSIENT,
+            target=target
+        )
+
+    def __resolve(self, t: type[T]) -> T:
         if not inspect.isclass(t):
             raise TypeError(f'Cannot instantiate non-class type {t!r}')
         ctor = t.__init__
@@ -185,7 +220,7 @@ class Container:
 
     def __get_registration(self, t: Type[T]) -> Registration | None:
         """
-        gets the registartion for the type **t**, if available.
+        gets the registration for the type **t**, if available.
 
         :param t: The type to get the registration for.
         :return: The registration, or None.
@@ -196,9 +231,13 @@ class Container:
         return registration
 
     @overload
-    def register_instance(self, t: Type[T], instance: T) -> None: ...
+    def register_instance(self, t: Type[T], instance: T) -> None:
+        ...
+
     @overload
-    def register_instance(self, t: Type[Any], instance: Any) -> None: ...
+    def register_instance(self, t: Type[Any], instance: Any) -> None:
+        ...
+
     def register_instance(self, t: Type[Any], instance: Any) -> None:
         """
         Create an INSTANCE type registration for type *t*.
@@ -219,9 +258,13 @@ class Container:
         )
 
     @overload
-    def register_scoped(self, t: Type[T], target: Optional[Target] = ...) -> None: ...
+    def register_scoped(self, t: Type[T], target: Optional[Target] = ...) -> None:
+        ...
+
     @overload
-    def register_scoped(self, t: Type[Any], target: Optional[Target] = ...) -> None: ...
+    def register_scoped(self, t: Type[Any], target: Optional[Target] = ...) -> None:
+        ...
+
     def register_scoped(self, t: Type[Any], target: Optional[Target] = None) -> None:
         """
         Create a SCOPED type registration for type *t*.
@@ -243,9 +286,13 @@ class Container:
         )
 
     @overload
-    def register_singleton(self, t: Type[T], target: Optional[Target] = ...) -> None: ...
+    def register_singleton(self, t: Type[T], target: Optional[Target] = ...) -> None:
+        ...
+
     @overload
-    def register_singleton(self, t: Type[Any], target: Optional[Target] = ...) -> None: ...
+    def register_singleton(self, t: Type[Any], target: Optional[Target] = ...) -> None:
+        ...
+
     def register_singleton(self, t: Type[Any], target: Optional[Target] = None) -> None:
         """
         Create a SINGLETON type registration for type *t*.
@@ -263,9 +310,13 @@ class Container:
         )
 
     @overload
-    def register_transient(self, t: Type[T], target: Optional[Target] = ...) -> None: ...
+    def register_transient(self, t: Type[T], target: Optional[Target] = ...) -> None:
+        ...
+
     @overload
-    def register_transient(self, t: Type[Any], target: Optional[Target] = ...) -> None: ...
+    def register_transient(self, t: Type[Any], target: Optional[Target] = ...) -> None:
+        ...
+
     def register_transient(self, t: Type[Any], target: Optional[Target] = None) -> None:
         """
         Create a TRANSIENT type registration
@@ -274,30 +325,35 @@ class Container:
         :param target: The type or factory to be used when resolving type *t*. Omit to use *t* as the target (requires *t* to be a concrete type.)
         """
         self.__check_frozen(t)
-        if target is None:
-            target = t
-        self.__registrations[t] = Registration(
-            t=t,
-            lifetime=Lifetime.TRANSIENT,
-            target=target
-        )
+        self.__register_transient(t, target)
 
     @overload
-    def resolve(self, t: Type[T]) -> T: ...
+    def resolve(self, t: Type[T]) -> T:
+        ...
+
     @overload
-    def resolve(self, t: Type[Any]) -> Any: ...
+    def resolve(self, t: Type[Any]) -> Any:
+        ...
+
     def resolve(self, t: Type[Any]) -> Any:
         """
         Resolve type *t* using available registrations.
 
+        If *t* has no explicit registration but is a concrete class, create a TRANSIENT instance.
+
         :param t: The type to resolve.
-        :raises KeyError: When type *t*, or a type that *t* depends on, has no registration.
+        :raises KeyError: When type *t* is not a concrete class and has no registration.
         :raises RuntimeError: When a registration is malformed.
         :return: The object instance resolved for type *t*.
         """
         registration = self.__get_registration(t)
         if registration is None:
-            raise KeyError(f'No registration for {t!r}')
+            if self.__is_concrete(t) is True:
+                # implicit reg for concrete types
+                self.__register_transient(t, t)
+                return self.resolve(t)
+            else:
+                raise KeyError(f'No registration for {t!r}')
         # if `__outer_scope` is set, and registration is not `scoped`, defer to `__outer_scope`
         if registration.lifetime != Lifetime.SCOPED and self.__outer_scope is not None:
             return self.__outer_scope.resolve(t)
@@ -336,7 +392,7 @@ class Container:
 
 __all__ = [
     'Container',
-    'RegistrationException',
+    'RegistrationError',
     'Factory',
     'Target'
 ]

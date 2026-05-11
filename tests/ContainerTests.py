@@ -3,21 +3,19 @@
 
 from __future__ import annotations
 
-from typing import TypeVar
-
+from abc import ABC
 from hazrakah import Container
+from typing import TypeVar
 from punit import fact
 from punit.assertions.exceptions import raises
 
 _T = TypeVar('_T')
 
 
-# ----------------------------------------------------------------------
-# Helper classes used throughout the suite
-# ----------------------------------------------------------------------
-class IService:
+class IService(ABC):
     """Abstract service interface used for registration tests."""
     ...
+
 
 class ServiceA(IService):
     """Concrete implementation of ``IService`` with no dependencies."""
@@ -31,6 +29,12 @@ class ServiceB(IService):
         self.dependency: ServiceA = a
 
 
+class ServiceC(IService):
+    """Concrete implementation that depends on ``ServiceB``, but is not itself registered to the container."""
+    def __init__(self, b: ServiceB) -> None:
+        self.dependency: ServiceB = b
+
+
 def __factory_without_container() -> ServiceA:
     """Factory deliberately missing the required ``Container`` argument."""
     return ServiceA()
@@ -41,9 +45,6 @@ def __factory_with_container(container: Container) -> ServiceA:
     return ServiceA()
 
 
-# ----------------------------------------------------------------------
-# Fact tests
-# ----------------------------------------------------------------------
 @fact
 def register_instance_resolves_instance() -> None:
     """``register_instance`` stores the instance and ``resolve`` returns it."""
@@ -127,14 +128,21 @@ def scopes_must_resolve_non_scoped_registration_from_outer() -> None:
 
 
 @fact
-def nonexistent_registration_must_raises_KeyError() -> None:
+def nonexistent_registration_when_concrete_must_succeed() -> None:
+    container: Container = Container()
+
+    container.resolve(ServiceC)
+
+
+@fact
+def nonexistent_registration_when_abstract_must_fail() -> None:
     """Attempting to resolve an unregistered abstract raises ``KeyError``."""
     container: Container = Container()
 
     assert raises[KeyError](
         lambda: container.resolve(IService),
         exact=True
-    ), 'Expected KeyError for an unknown registration.'
+    ), 'Expected KeyError for an unknown registration of an abstract type.'
 
 
 @fact
