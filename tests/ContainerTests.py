@@ -39,6 +39,12 @@ class ServiceC(IService):
         self.dependency: ServiceB = b
 
 
+class ClassHavingDefaultInit:
+
+    def foo(self) -> None:
+        assert True
+
+
 def __factory_without_container() -> ServiceA:
     """Factory deliberately missing the required ``Container`` argument."""
     return ServiceA()
@@ -168,3 +174,10 @@ def factories_must_resolve_successfully() -> None:
 
     result: IService = container.resolve(IService)
     assert isinstance(result, ServiceA), 'Factory should produce a ServiceA instance.'
+
+
+@fact
+def type_when_default_init_then_must_succeed() -> None:
+    "confirm that a type with a default initializer does not result in failure"
+    container: Container = Container()
+    _ = container.resolve(ClassHavingDefaultInit)

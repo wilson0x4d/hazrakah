@@ -205,6 +205,8 @@ class Container:
     def __resolve(self, t: type[T]) -> T:
         if not inspect.isclass(t):
             raise TypeError(f'Cannot instantiate non-class type {t!r}')
+        if t.__init__ is object.__init__:
+            return t()
         ctor = t.__init__
         sig = inspect.signature(ctor)
         kwargs: dict[str, Any] = {}
