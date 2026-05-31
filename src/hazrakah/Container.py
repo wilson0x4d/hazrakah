@@ -30,8 +30,7 @@ Target: TypeAlias = Union[Type[T], Factory]
 class Lifetime(IntEnum):
     TRANSIENT = 1
     SINGLETON = 2
-    SCOPED = 3
-    INSTANCE = 4
+    INSTANCE = 3
 
 
 class RegistrationError(RuntimeError):
@@ -104,7 +103,7 @@ class Container:
         self.__singletons = {}
         self.__outer_scope = outer_scope
         self.__registrations = {}
-        super().__setattr__('__frozen', frozen if frozen is not None else False)
+        super().__setattr__('__frozen', frozen is True)
 
     def __setattr__(self, name, value):
         if getattr(self, '__frozen'):
@@ -146,7 +145,7 @@ class Container:
         """
         if getattr(self, '__frozen'):
             raise RegistrationError(
-                f'Cannot modify a frozen container.'
+                f'Cannot modify a frozen container; '
                 f'While creating a registration for type {t!r}'
             )
 
@@ -175,22 +174,16 @@ class Container:
         """
         if isinstance(t, _SpecialForm):
             return False
-
         if isinstance(t, TypeVar):
             return False
-
         if get_origin(t) is not None:
             return False
-
         if not isinstance(t, type):
             return False
-
         if issubclass(t, Protocol):  # type: ignore[arg-type]
             return False
-
         if inspect.isabstract(t) or (hasattr(t, '__bases__') and ABC in t.__bases__):
             return False
-
         return True
 
     def __register_transient(self, t: Type[Any], target: Optional[Target] = None) -> None:
@@ -220,17 +213,15 @@ class Container:
             kwargs[name] = self.resolve(dep_type)
         return t(**kwargs)
 
-    def __get_registration(self, t: Type[T]) -> Registration | None:
-        """
-        gets the registration for the type **t**, if available.
-
-        :param t: The type to get the registration for.
-        :return: The registration, or None.
-        """
-        registration = self.__registrations.get(t, None)
-        if registration is None and self.__outer_scope is not None:
-            registration = self.__outer_scope.__get_registration(t)
-        return registration
+    def __get_registration(self, t: Type[Any]) -> tuple[Registration, Container] | tuple[None, None]:
+        """get a tuple containing a matching registration and the scope the registration was discovered in."""
+        scope: Container | None = self
+        while scope is not None:
+            registration = scope.__registrations.get(t)
+            if registration is not None:
+                return registration, scope
+            scope = scope.__outer_scope
+        return None, None
 
     @overload
     def register_instance(self, t: Type[T], instance: T) -> None:
@@ -256,35 +247,7 @@ class Container:
         self.__registrations[t] = Registration(
             t=t,
             lifetime=Lifetime.INSTANCE,
-            instance=instance
-        )
-
-    @overload
-    def register_scoped(self, t: Type[T], target: Optional[Target] = ...) -> None:
-        ...
-
-    @overload
-    def register_scoped(self, t: Type[Any], target: Optional[Target] = ...) -> None:
-        ...
-
-    def register_scoped(self, t: Type[Any], target: Optional[Target] = None) -> None:
-        """
-        Create a SCOPED type registration for type *t*.
-
-        This ensures that a container acquired from ``create_scope(...)`` will resolve NEW instances for type *t* without affecting instances created in a higher scope.
-
-        Scoped registrations also function as singletons within their respective scopes.
-
-        :param t: The type to register for.
-        :param target: The type or factory to be used when resolving type *t*. Omit to use *t* as the target (requires *t* to be a concrete type.)
-        """
-        self.__check_frozen(t)
-        if target is None:
-            target = t
-        self.__registrations[t] = Registration(
-            t=t,
-            lifetime=Lifetime.SCOPED,
-            target=target
+            instance=instance,
         )
 
     @overload
@@ -308,7 +271,7 @@ class Container:
         self.__registrations[t] = Registration(
             t=t,
             lifetime=Lifetime.SINGLETON,
-            target=target
+            target=target,
         )
 
     @overload
@@ -348,34 +311,31 @@ class Container:
         :raises RuntimeError: When a registration is malformed.
         :return: The object instance resolved for type *t*.
         """
-        registration = self.__get_registration(t)
+        registration, scope = self.__get_registration(t)
         if registration is None:
-            if self.__is_concrete(t) is True:
+            if self.__is_concrete(t):
                 # implicit reg for concrete types
                 self.__register_transient(t, t)
                 return self.resolve(t)
             else:
                 raise KeyError(f'No registration for {t!r}')
-        # if `__outer_scope` is set, and registration is not `scoped`, defer to `__outer_scope`
-        if registration.lifetime != Lifetime.SCOPED and self.__outer_scope is not None:
-            return self.__outer_scope.resolve(t)
-        # handle resolution according to lifetime semantics
         match registration.lifetime:
             case Lifetime.INSTANCE:
                 return registration.instance
-            case Lifetime.SCOPED | Lifetime.SINGLETON:
-                obj = self.__singletons.get(t, None)
+            case Lifetime.SINGLETON:
+                if scope is None:
+                    raise RuntimeError('Singleton registration found without owning container')
+                obj = scope.__singletons.get(t)
                 if obj is None:
-                    obj = self.__create_instance(t, registration)
-                    self.__singletons[t] = obj
+                    obj = scope.__create_instance(t, registration)
+                    scope.__singletons[t] = obj
                 return obj
             case Lifetime.TRANSIENT:
                 return self.__create_instance(t, registration)
             case _:  # pragma: no cover
-                raise RuntimeError(
-                    f'Unexpected lifetime {registration.lifetime!r}')  # pragma: no cover
+                raise RuntimeError(f'Unexpected lifetime {registration.lifetime!r}')
 
-    def create_scope(self, frozen: Optional[bool] = False) -> 'Container':
+    def create_scope(self, frozen: Optional[bool] = False) -> Container:
         """
         Create a new scope as a :class:`Container` instance.
 
@@ -385,9 +345,9 @@ class Container:
 
     def freeze(self) -> None:
         """
-        Freezes the Container.
+        Freeze the Container.
 
-        Attempts to create registrations after the container has been frozen will result in a :class:`RegistrationError`.
+        Any attempt to create registrations after the container has been frozen will result in a :class:`RegistrationError`.
         """
         super().__setattr__('__frozen', True)
 

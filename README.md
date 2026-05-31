@@ -8,10 +8,10 @@ This README is only a high-level introduction to **hazrakah**. For more detailed
 
 ## Features
 
-- Supports Transient, Scoped, Singleton and Instance registrations.
-- Registration targets can be a concrete type or a factory.
-- Scopes are hierarchical, and scoped registrations are isolated to each scope.
+- Supports Transient, Singleton and Instance registrations.
+- Registration targets can be a concrete type or a factory function.
 - Container is mutable by default, but can be frozen on-demand.
+- Hierarchical container scopes can be created, and scoped registrations are isolated to their respective scope.
 
 ## Installation
 
@@ -42,18 +42,19 @@ To use `hazrakah` simply create a `Container` instance and create one or more ty
     #
     fizz1 = container.resolve(IFizz)
     fizz2 = container.resolve(IFizz)
-    assert fizz1 is not fizz2, 'transients reg, every resolve is a new instance.'
+    assert fizz1 is not fizz2, 'transient reg, every resolve is a new instance.'
 
-
-    # SCOPED == within a given "scope" a single instance is returned
-    # for every resolve of `IBuzz`. new scopes == new instances.
-    container.register_scoped(IBuzz, Buzz)
-    #
-    buzz1 = container.resolve(IBuzz)
-    buzz2 = container.resolve(IBuzz)
-    buzz3 = scoped_container.resolve(IBuzz)
-    assert buzz1 is buzz2, 'scoped resolves are singleton-like WITHIN a container scope.'
-    assert buzz1 is not buzz3, 'scoped resolves are NOT shared between container scopes, new scope? new singleton.'
+    # CHILD SCOPED registrations cannot be resolved
+    # from PARENT SCOPE.
+    scoped_container.register_transient(IBuzz, Buzz)
+    buzz1 = scoped_container.resolve(IBuzz)
+    assert buzz1 is not None, 'scopes should allow new registrations.'
+    try:
+        _ = container.resolve(IBuzz)
+    except KeyError:
+        pass
+    else:
+        raise AssertionError('parent scopes should not resolve child scope registrations.')
 
     # INSTANCE == the provided instance is returned
     # for every resolve of `FizzBuzz`.

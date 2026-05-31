@@ -14,10 +14,10 @@ Overview
 Features
 --------
 
-- Supports Transient, Scoped, Singleton and Instance registrations.
+- Supports Transient, Singleton and Instance registrations.
 - Registration targets can be a concrete type or a factory function.
-- Scopes are hierarchical, and scoped registrations are isolated to each scope.
 - Container is mutable by default, but can be frozen on-demand.
+- Hierarchical container scopes can be created, and scoped registrations are isolated to their respective scope.
 
 Contents
 --------
