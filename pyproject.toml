@@ -22,10 +22,15 @@ dependencies = [
 dev = [
     "coverage",
     "mypy",
-    "punit (>=1.4)",
+    "punit (>=1.4.5)",
     "py-conventional-semver",
     "twine"
 ]
+
+[project.urls]
+Documentation = "https://hazrakah.readthedocs.io/"
+Homepage = "https://github.com/wilson0x4d/hazrakah"
+Repository = "https://github.com/wilson0x4d/hazrakah.git"
 
 [tool.setuptools.package-data]
 "hazrakah" = ["py.typed"]
