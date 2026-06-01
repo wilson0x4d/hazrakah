@@ -235,7 +235,7 @@ class Container:
         """
         Create an INSTANCE type registration for type *t*.
 
-        This ensures that resolve attempt for *t* will yield *instance*.
+        Every resolve of *t* will result in the specified object instance.
 
         :param t: The type to register for.
         :param instance: The instance to register.
@@ -262,6 +262,8 @@ class Container:
         """
         Create a SINGLETON type registration for type *t*.
 
+        Every resolve of *t* will result in a single, shared instance of *t*.
+
         :param t: The type to register for.
         :param target: The type or factory to be used when resolving type *t*. Omit to use *t* as the target (requires *t* to be a concrete type.)
         """
@@ -284,7 +286,9 @@ class Container:
 
     def register_transient(self, t: Type[Any], target: Optional[Target] = None) -> None:
         """
-        Create a TRANSIENT type registration
+        Create a TRANSIENT type registration for type *t*.
+
+        Every resolve of *t* will result in a new instance of *t*.
 
         :param t: The type to register for.
         :param target: The type or factory to be used when resolving type *t*. Omit to use *t* as the target (requires *t* to be a concrete type.)

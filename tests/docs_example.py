@@ -84,10 +84,6 @@ def basic_verification() -> None:
     fizzbuzz1 = container.resolve(FizzBuzz)
     fizzbuzz2 = scoped_container.resolve(FizzBuzz)
     assert fizzbuzz1 is fizzbuzz2, 'instance resolves always yield the provided instance'
-    # NOTE: "scopes" resolve hierarchically any "non-scoped" type registration,
-    #       this is why `scoped_container`` resolved the same instance as `container`.
-    #       if this were a scoped registration a NEW instance would have been created.
-    #       this scoping logic is true for INSTANCE, SINGLETON, and TRANSIENT regs.
 
     # SINGLETON == a SINGLE instance will be created
     # for ALL resolves of `IFizzBuzz`.
@@ -115,7 +111,7 @@ def basic_verification() -> None:
 
     try:
         scoped_container.register_instance(Fizz, Fizz())
-    except:
+    except RegistrationError:
         assert False, 'Scopes created BEFORE freezing are NOT frozen.'
 
     try:
