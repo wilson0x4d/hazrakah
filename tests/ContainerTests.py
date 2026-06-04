@@ -5,15 +5,18 @@ from __future__ import annotations
 
 from abc import ABC
 from hazrakah import Container, DependencyResolver
-from typing import Optional, Protocol, TypeVar
+from typing import Optional, Protocol, TypeVar, runtime_checkable
 from punit import fact
 from punit.assertions.exceptions import raises
 
 _T = TypeVar('_T')
 
 
+@runtime_checkable
 class ProtocolDroid(Protocol):
-    ...
+
+    def optimus(self) -> None:
+        ...
 
 
 class IService(ABC):
@@ -315,3 +318,27 @@ def unresolvable_optional_types_must_resolve_none() -> None:
     obj = container.resolve(GoodCop)
     assert obj is not None
     assert obj.cracked_wheat is None
+
+
+@fact
+def is_registered_bvt() -> None:
+    """`is_registered` should reflect registrations in the current container and its ancestors."""
+    base: Container = Container()
+    assert not base.is_registered(IService), 'Unregistered type should return False'
+    base.register_transient(IService, ServiceA)
+    assert base.is_registered(IService), 'After transient registration, should be True'
+    child: Container = base.create_scope()
+    assert child.is_registered(IService), 'Child should inherit registration visibility from parent'
+    child.register_singleton(IService, ServiceB)
+    assert child.is_registered(IService), 'Child sees its own registration as True'
+    assert base.is_registered(IService), 'Parent registration status remains True after child registers'
+
+    class DummyDroid(ProtocolDroid):
+        """Simple concrete class implementing ProtocolDroid (which has no members)."""
+
+        def optimus(self) -> None:
+            pass
+
+    child.register_instance(ProtocolDroid, DummyDroid())
+    assert child.is_registered(ProtocolDroid), 'Child should report its own instance registration'
+    assert not base.is_registered(ProtocolDroid), 'Parent should not see child-only registration'

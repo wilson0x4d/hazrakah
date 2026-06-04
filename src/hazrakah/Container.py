@@ -67,7 +67,7 @@ class Registration:
         return self.__lifetime
 
 
-class Container(DependencyRegistry, DependencyResolver, ScopedDependencyResolver):
+class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver):
 
     __frozen: bool
     __singletons: dict[Type[Any], Any]
@@ -199,24 +199,11 @@ class Container(DependencyRegistry, DependencyResolver, ScopedDependencyResolver
             scope = scope.__outer_scope
         return None, None
 
-    @overload
-    def register_instance(self, t: Type[T], instance: T) -> None:
-        ...
-
-    @overload
-    def register_instance(self, t: Type[Any], instance: Any) -> None:
-        ...
+    def is_registered(self, t: Type[Any]) -> bool:
+        r, c = self.__get_registration(t)
+        return r is not None
 
     def register_instance(self, t: Type[Any], instance: Any) -> None:
-        """
-        Create an INSTANCE type registration for type *t*.
-
-        Every resolve of *t* will result in the specified object instance.
-
-        :param t: The type to register for.
-        :param instance: The instance to register.
-        :raises TypeError: When the provided instance is not an instance of type *t* (type mismatch.)
-        """
         self.__check_frozen(t)
         if not isinstance(instance, t):
             raise TypeError(f'{instance!r} is not an instance of type {t!r}')
@@ -226,23 +213,7 @@ class Container(DependencyRegistry, DependencyResolver, ScopedDependencyResolver
             instance=instance,
         )
 
-    @overload
-    def register_singleton(self, t: Type[T], target: Optional[Target[Any]] = ...) -> None:
-        ...
-
-    @overload
-    def register_singleton(self, t: Type[Any], target: Optional[Target[Any]] = ...) -> None:
-        ...
-
     def register_singleton(self, t: Type[Any], target: Optional[Target[Any]] = None) -> None:
-        """
-        Create a SINGLETON type registration for type *t*.
-
-        Every resolve of *t* will result in a single, shared instance of *t*.
-
-        :param t: The type to register for.
-        :param target: The type or factory to be used when resolving type *t*.  Omit to use *t* as the target (requires *t* to be a concrete type.)
-        """
         self.__check_frozen(t)
         if target is None:
             target = t
@@ -252,23 +223,7 @@ class Container(DependencyRegistry, DependencyResolver, ScopedDependencyResolver
             target=target,
         )
 
-    @overload
-    def register_transient(self, t: Type[T], target: Optional[Target[Any]] = ...) -> None:
-        ...
-
-    @overload
-    def register_transient(self, t: Type[Any], target: Optional[Target[Any]] = ...) -> None:
-        ...
-
     def register_transient(self, t: Type[Any], target: Optional[Target[Any]] = None) -> None:
-        """
-        Create a TRANSIENT type registration for type *t*.
-
-        Every resolve of *t* will result in a new instance of *t*.
-
-        :param t: The type to register for.
-        :param target: The type or factory to be used when resolving type *t*.  Omit to use *t* as the target (requires *t* to be a concrete type.)
-        """
         self.__check_frozen(t)
         self.__register_transient(t, target)
 
@@ -281,16 +236,6 @@ class Container(DependencyRegistry, DependencyResolver, ScopedDependencyResolver
         ...
 
     def resolve(self, t: Type[Any]) -> Any:
-        """
-        Resolve type *t* using available registrations.
-
-        If *t* has no explicit registration but is a concrete class, create a TRANSIENT instance.
-
-        :param t: The type to resolve.
-        :raises KeyError: When type *t* is not a concrete class and has no registration.
-        :raises RuntimeError: When a registration is malformed.
-        :return: The object instance resolved for type *t*.
-        """
         is_optional = isinstance(t, str) and t.startswith('Optional')
         if get_origin(t) is Union:
             # an attempt to deunionize from `Optional[T]` to `T`` -- won't work for string annotations)
@@ -327,11 +272,6 @@ class Container(DependencyRegistry, DependencyResolver, ScopedDependencyResolver
                 raise RuntimeError(f'Unexpected lifetime {registration.lifetime!r}')
 
     def create_scope(self, frozen: Optional[bool] = False) -> Container:
-        """
-        Create a new scope as a :class:`Container` instance.
-
-        :return: A :class:`Container` instance to use for the the scope.
-        """
         return Container(outer_scope=self, frozen=frozen or getattr(self, '__frozen'))
 
     def freeze(self) -> None:
