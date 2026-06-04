@@ -13,16 +13,28 @@ class DependencyResolver(Protocol):
     """
 
     def resolve(self, t: Type[Any]) -> Any:
+        """
+        Resolve type *t* using available registrations.
+
+        If *t* has no explicit registration but is a concrete class, create a TRANSIENT instance.
+
+        :param t: The type to resolve.
+        :raises KeyError: When type *t* is not a concrete class and has no registration.
+        :raises RuntimeError: When a registration is malformed.
+        :return: The object instance resolved for type *t*.
+        """
         ...
 
 
 @runtime_checkable
-class ScopedDependencyResolver(Protocol):
-
-    def resolve(self, t: Type[Any]) -> Any:
-        ...
+class ScopedDependencyResolver(DependencyResolver, Protocol):
 
     def create_scope(self) -> ScopedDependencyResolver:
+        """
+        Create a new scope as a :class:`Container` instance.
+
+        :return: A :class:`Container` instance to use for the the scope.
+        """
         ...
 
 
