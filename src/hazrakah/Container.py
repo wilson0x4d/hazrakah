@@ -26,7 +26,6 @@ from .RegistrationError import RegistrationError
 from .DependencyRegistry import DependencyRegistry, Target, Factory
 from .DependencyResolver import DependencyResolver, ScopedDependencyResolver
 
-
 T = TypeVar('T')
 
 
@@ -73,12 +72,18 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
     __singletons: dict[Type[Any], Any]
     __outer_scope: Optional[Container]
     __registrations: dict[Type[Any], Registration]
+    __proto_co_code: Any
 
     def __init__(self, outer_scope: Optional[Container] = None, frozen: bool = False) -> None:
         super().__setattr__('__frozen', False)
         self.__singletons = {}
         self.__outer_scope = outer_scope
         self.__registrations = {}
+
+        class _proto(Protocol):
+            pass
+        self.__proto_co_code = _proto.__init__.__code__.co_code
+
         super().__setattr__('__frozen', frozen is True)
 
     def __setattr__(self, name: str, value: Any):
@@ -157,7 +162,11 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         if not isinstance(t, type):
             return False
         if issubclass(t, Protocol):  # type: ignore[arg-type]
-            return False
+            if isinstance(t, type):
+                if Protocol in getattr(t, '__bases__', ()):
+                    return False
+                elif issubclass(t, Protocol) and getattr(t, '__abstractmethods__', None):  # type: ignore[arg-type]
+                    return False
         if inspect.isabstract(t) or (hasattr(t, '__bases__') and ABC in t.__bases__):
             return False
         return True
@@ -174,7 +183,7 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
     def __resolve(self, t: type[T]) -> T:
         if not inspect.isclass(t):
             raise TypeError(f'Cannot instantiate non-class type {t!r}')
-        if t.__init__ is object.__init__:
+        if t.__init__ is object.__init__ or t.__init__.__code__.co_code is self.__proto_co_code:
             return t()
         ctor = t.__init__
         sig = inspect.signature(ctor)
@@ -253,8 +262,7 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
             else:
                 if is_optional:
                     return None
-                else:
-                    raise KeyError(f'No registration for {t!r}')
+                raise KeyError(f'No registration for {t!r}')
         match registration.lifetime:
             case Lifetime.INSTANCE:
                 return registration.instance

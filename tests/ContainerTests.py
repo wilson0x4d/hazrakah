@@ -188,6 +188,43 @@ def type_when_default_init_then_must_succeed() -> None:
 
 
 @fact
+def proto_subclass_no_init_must_resolve() -> None:
+    """confirm that a type extending a proto, and having a default initializer, does not result in failure"""
+
+    @runtime_checkable
+    class PSNIMR(Protocol):
+        def foo(self) -> None:
+            ...
+
+    class PSNI(PSNIMR):
+        def foo(self) -> None:
+            pass
+
+    container = Container()
+    container.register_transient(PSNIMR, PSNI)
+    obj = container.resolve(PSNIMR)
+    assert obj is not None
+
+
+@fact
+def unregistered_proto_subclass_no_init_must_resolve() -> None:
+    """confirm that a type extending a proto, and having a default initializer, does not result in failure"""
+
+    @runtime_checkable
+    class UPSNIMR(Protocol):
+        def foo(self) -> None:
+            ...
+
+    class UPSNI(UPSNIMR):
+        def foo(self) -> None:
+            pass
+
+    container = Container()
+    obj = container.resolve(UPSNI)
+    assert obj is not None
+
+
+@fact
 def child_overrides_non_scoped_registrations() -> None:
     """
     confirm that a child scope that registers its own transient, singleton, or
