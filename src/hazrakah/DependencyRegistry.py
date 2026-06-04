@@ -12,9 +12,9 @@ Target: TypeAlias = Union[Type[T], Factory[T]]
 
 
 @runtime_checkable
-class DependencyRegistry(Protocol):
+class DependencyRegistry(DependencyResolver, Protocol):
     """
-    A protocol for dependency registration without exposing resolution methods.
+    A protocol for dependency registration (and resolution).
     """
 
     def register_instance(self, t: Type[Any], instance: Any) -> None:
