@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from abc import ABC
-from hazrakah import Container
+from hazrakah import Container, DependencyResolver
 from typing import Protocol, TypeVar
 from punit import fact
 from punit.assertions.exceptions import raises
@@ -48,12 +48,12 @@ class ClassHavingDefaultInit:
         assert True
 
 
-def __factory_without_container() -> ServiceA:
+def __factory_without_resolver() -> ServiceA:
     """Factory deliberately missing the required ``Container`` argument."""
     return ServiceA()
 
 
-def __factory_with_container(_container: Container) -> ServiceA:
+def __factory_with_resolver(_resolver: DependencyResolver) -> ServiceA:
     """Correctly-typed factory that returns a new ``ServiceA``."""
     return ServiceA()
 
@@ -166,7 +166,7 @@ def nonexistent_registration_when_protocol_must_fail() -> None:
 def factories_must_resolve_successfully() -> None:
     """A well-typed factory is invoked and its product is returned."""
     container: Container = Container()
-    container.register_transient(IService, __factory_with_container)
+    container.register_transient(IService, __factory_with_resolver)
 
     result: IService = container.resolve(IService)
     assert isinstance(result, ServiceA), 'Factory should produce a ServiceA instance.'

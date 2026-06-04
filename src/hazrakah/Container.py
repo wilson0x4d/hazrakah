@@ -10,21 +10,21 @@ import sys
 from typing import (
     _SpecialForm,
     Any,
-    Callable,
     Optional,
     Protocol,
     Type,
-    TypeAlias,
     TypeVar,
-    Union,
     cast,
     get_origin,
     overload
 )
 
+from .RegistrationError import RegistrationError
+from .DependencyRegistry import DependencyRegistry, Target, Factory
+from .DependencyResolver import DependencyResolver
+
+
 T = TypeVar('T')
-Factory: TypeAlias = Callable[['Container'], Any]
-Target: TypeAlias = Union[Type[T], Factory]
 
 
 class Lifetime(IntEnum):
@@ -33,42 +33,15 @@ class Lifetime(IntEnum):
     INSTANCE = 3
 
 
-class RegistrationError(RuntimeError):
-    """
-    Raised when a registration cannot be processed.
-
-    Typical situations that trigger this error:
-
-    * Attempting to create an instance from a registration that has no
-      ``target`` (e.g. a ``Lifetime.INSTANCE`` registration without an
-      associated object).
-    * Supplying a factory that does not conform to the expected signature
-      ``Callable[[Container], T]``.
-    * Providing an instance to :meth:`Container.register_instance` that is
-      not an instance of the registration type.
-    """
-
-    def __init__(self, message: str, *, cause: BaseException | None = None) -> None:
-        """
-        Create the exception.
-
-        :param message: Human-readable description of the problem.
-        :param cause: Optional original exception that led to this error.  It is stored as ``__cause__`` so that traceback chaining works automatically.
-        """
-        super().__init__(message)
-        if cause is not None:
-            self.__cause__ = cause
-
-
 class Registration:
 
     __slots__ = ('__t', '__target', '__instance', '__lifetime')
     __t: Type[Any]
-    __target: Optional[Target]
+    __target: Optional[Target[Any]]
     __instance: Optional[Any]
     __lifetime: Lifetime
 
-    def __init__(self, lifetime: Lifetime, t: Type[Any], target: Optional[Target] = None, instance: Optional[Any] = None) -> None:
+    def __init__(self, lifetime: Lifetime, t: Type[Any], target: Optional[Target[Any]] = None, instance: Optional[Any] = None) -> None:
         self.__t = t
         self.__target = target
         self.__instance = instance
@@ -79,7 +52,7 @@ class Registration:
         return self.__t
 
     @property
-    def target(self) -> Optional[Target]:
+    def target(self) -> Optional[Target[Any]]:
         return self.__target
 
     @property
@@ -91,7 +64,7 @@ class Registration:
         return self.__lifetime
 
 
-class Container:
+class Container(DependencyRegistry, DependencyResolver):
 
     __frozen: bool
     __singletons: dict[Type[Any], Any]
@@ -105,12 +78,12 @@ class Container:
         self.__registrations = {}
         super().__setattr__('__frozen', frozen is True)
 
-    def __setattr__(self, name, value):
+    def __setattr__(self, name: str, value: Any):
         if getattr(self, '__frozen'):
             raise AttributeError(f'Cannot modify attribute {name!r} on a frozen Container.')
         super().__setattr__(name, value)
 
-    def __delattr__(self, name):
+    def __delattr__(self, name: str):
         if getattr(self, '__frozen'):
             raise AttributeError(f'Cannot delete attribute {name!r} on a frozen Container.')
         super().__delattr__(name)
@@ -165,7 +138,7 @@ class Container:
         if isinstance(registration.target, type):
             return self.__resolve(cast(Type[T], registration.target))
         else:
-            factory = cast(Factory, registration.target)
+            factory = registration.target
             return factory(self)
 
     def __is_concrete(self, t: Type[Any]) -> bool:
@@ -186,7 +159,7 @@ class Container:
             return False
         return True
 
-    def __register_transient(self, t: Type[Any], target: Optional[Target] = None) -> None:
+    def __register_transient(self, t: Type[Any], target: Optional[Target[Any]] = None) -> None:
         if target is None:
             target = t
         self.__registrations[t] = Registration(
@@ -251,14 +224,14 @@ class Container:
         )
 
     @overload
-    def register_singleton(self, t: Type[T], target: Optional[Target] = ...) -> None:
+    def register_singleton(self, t: Type[T], target: Optional[Target[Any]] = ...) -> None:
         ...
 
     @overload
-    def register_singleton(self, t: Type[Any], target: Optional[Target] = ...) -> None:
+    def register_singleton(self, t: Type[Any], target: Optional[Target[Any]] = ...) -> None:
         ...
 
-    def register_singleton(self, t: Type[Any], target: Optional[Target] = None) -> None:
+    def register_singleton(self, t: Type[Any], target: Optional[Target[Any]] = None) -> None:
         """
         Create a SINGLETON type registration for type *t*.
 
@@ -277,14 +250,14 @@ class Container:
         )
 
     @overload
-    def register_transient(self, t: Type[T], target: Optional[Target] = ...) -> None:
+    def register_transient(self, t: Type[T], target: Optional[Target[Any]] = ...) -> None:
         ...
 
     @overload
-    def register_transient(self, t: Type[Any], target: Optional[Target] = ...) -> None:
+    def register_transient(self, t: Type[Any], target: Optional[Target[Any]] = ...) -> None:
         ...
 
-    def register_transient(self, t: Type[Any], target: Optional[Target] = None) -> None:
+    def register_transient(self, t: Type[Any], target: Optional[Target[Any]] = None) -> None:
         """
         Create a TRANSIENT type registration for type *t*.
 
