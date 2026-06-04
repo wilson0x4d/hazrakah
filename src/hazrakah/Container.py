@@ -21,7 +21,7 @@ from typing import (
 
 from .RegistrationError import RegistrationError
 from .DependencyRegistry import DependencyRegistry, Target, Factory
-from .DependencyResolver import DependencyResolver
+from .DependencyResolver import DependencyResolver, ScopedDependencyResolver
 
 
 T = TypeVar('T')
@@ -64,7 +64,7 @@ class Registration:
         return self.__lifetime
 
 
-class Container(DependencyRegistry, DependencyResolver):
+class Container(DependencyRegistry, DependencyResolver, ScopedDependencyResolver):
 
     __frozen: bool
     __singletons: dict[Type[Any], Any]
