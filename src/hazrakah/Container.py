@@ -7,6 +7,7 @@ from abc import ABC
 from enum import IntEnum
 import inspect
 import sys
+from types import NoneType
 from typing import (
     _SpecialForm,
     Any,
@@ -14,7 +15,9 @@ from typing import (
     Protocol,
     Type,
     TypeVar,
+    Union,
     cast,
+    get_args,
     get_origin,
     overload
 )
@@ -238,7 +241,7 @@ class Container(DependencyRegistry, DependencyResolver, ScopedDependencyResolver
         Every resolve of *t* will result in a single, shared instance of *t*.
 
         :param t: The type to register for.
-        :param target: The type or factory to be used when resolving type *t*. Omit to use *t* as the target (requires *t* to be a concrete type.)
+        :param target: The type or factory to be used when resolving type *t*.  Omit to use *t* as the target (requires *t* to be a concrete type.)
         """
         self.__check_frozen(t)
         if target is None:
@@ -264,7 +267,7 @@ class Container(DependencyRegistry, DependencyResolver, ScopedDependencyResolver
         Every resolve of *t* will result in a new instance of *t*.
 
         :param t: The type to register for.
-        :param target: The type or factory to be used when resolving type *t*. Omit to use *t* as the target (requires *t* to be a concrete type.)
+        :param target: The type or factory to be used when resolving type *t*.  Omit to use *t* as the target (requires *t* to be a concrete type.)
         """
         self.__check_frozen(t)
         self.__register_transient(t, target)
@@ -288,6 +291,14 @@ class Container(DependencyRegistry, DependencyResolver, ScopedDependencyResolver
         :raises RuntimeError: When a registration is malformed.
         :return: The object instance resolved for type *t*.
         """
+        is_optional = isinstance(t, str) and t.startswith('Optional')
+        if get_origin(t) is Union:
+            # an attempt to deunionize from `Optional[T]` to `T`` -- won't work for string annotations)
+            # if we cannot instantiate the resulting type, because it is Optional (unioned with `None`)
+            # we will allow the passing of None in leiu.
+            org_args = get_args(t)
+            is_optional = org_args[-1] is None
+            t = [e for e in get_args(t) if e is not NoneType][0]
         registration, scope = self.__get_registration(t)
         if registration is None:
             if self.__is_concrete(t):
@@ -295,7 +306,10 @@ class Container(DependencyRegistry, DependencyResolver, ScopedDependencyResolver
                 self.__register_transient(t, t)
                 return self.resolve(t)
             else:
-                raise KeyError(f'No registration for {t!r}')
+                if is_optional:
+                    return None
+                else:
+                    raise KeyError(f'No registration for {t!r}')
         match registration.lifetime:
             case Lifetime.INSTANCE:
                 return registration.instance

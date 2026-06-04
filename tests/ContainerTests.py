@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from abc import ABC
 from hazrakah import Container, DependencyResolver
-from typing import Protocol, TypeVar
+from typing import Optional, Protocol, TypeVar
 from punit import fact
 from punit.assertions.exceptions import raises
 
@@ -135,9 +135,14 @@ def scopes_must_resolve_non_scoped_registration_from_outer() -> None:
 
 @fact
 def nonexistent_registration_when_concrete_must_succeed() -> None:
-    container: Container = Container()
+    class UnregisteredExplosive:
+        attr1: int
 
-    container.resolve(ServiceC)
+        def __init(self) -> None:
+            self.attr1 = 1
+    container = Container()
+    obj = container.resolve(UnregisteredExplosive)
+    assert obj is not None
 
 
 @fact
@@ -280,3 +285,33 @@ def test_hierarchical_singletons() -> None:
         pass
     else:
         raise AssertionError('Parent container should not resolve child-registered singleton')
+
+
+@fact
+def optional_types_must_resolve() -> None:
+    class EthicalNarrative:
+        cracked_wheat: object | None
+
+        def __init__(self, lumnum: Optional[object] = None) -> None:
+            self.cracked_wheat = lumnum
+    container = Container()
+    obj = container.resolve(EthicalNarrative)
+    assert obj is not None
+    assert obj.cracked_wheat is not None
+
+
+@fact
+def unresolvable_optional_types_must_resolve_none() -> None:
+    class BadCop:
+        def __init__(self) -> None:
+            raise Exception('robble, robble, robble')
+
+    class GoodCop:
+        cracked_wheat: object | None
+
+        def __init__(self, lumnum: Optional[BadCop] = None) -> None:
+            self.cracked_wheat = lumnum
+    container = Container()
+    obj = container.resolve(GoodCop)
+    assert obj is not None
+    assert obj.cracked_wheat is None

@@ -24,7 +24,7 @@ You can install `hazrakah` from [PyPI](https://pypi.org/project/hazrakah/) throu
 
 ## Usage
 
-To use `hazrakah` simply create a `Container` instance and create one or more type registrations. Afterward, the container can be used to resolve instances for the types you have registered:
+To use `hazrakah` simply create a `Container` instance and create one or more type registrations.  Afterward, the container can be used to resolve instances for the types you have registered:
 
 ```python
 
