@@ -7,7 +7,7 @@ from abc import ABC
 from enum import IntEnum
 import inspect
 import sys
-from types import NoneType
+from types import NoneType, TracebackType
 from typing import (
     _SpecialForm,
     Any,
@@ -67,18 +67,51 @@ class Registration:
 
 
 class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver):
+    """
+    A dependency-injection container that supports hierarchical scopes and deterministic destruction.
+
+    Containers track every object they directly instantiate (via ``__create_instance``) in an internal
+    ``set``. When a container is used as a context manager (either directly or via ``create_scope()``,
+    all tracked objects are torn down by calling their ``close()`` method at the end of the scope.
+
+    Example
+    -------
+
+    Direct container as context manager::
+
+        with Container() as container:
+            container.register_transient(Foo)
+            foo = container.resolve(Foo)
+        # Foo is destroyed here (deterministically, before the next statement executes)
+
+    Child-scope pattern for per-request / per-transaction usage::
+
+        parent = Container()
+        with parent.create_scope() as scope:
+            scope.register_transient(Foo)
+            foo = scope.resolve(Foo)
+        # Foo destroyed at scope exit; parent unaffected
+
+    :ivar outer_scope: The parent container, or ``None`` for the root.
+    :vartype outer_scope: Optional[Container]
+
+    .. automethod:: __enter__
+    .. automethod:: __exit__
+    """
 
     __frozen: bool
     __singletons: dict[Type[Any], Any]
     __outer_scope: Optional[Container]
     __registrations: dict[Type[Any], Registration]
     __proto_co_code: Any
+    __tracked: set[Any]
 
     def __init__(self, outer_scope: Optional[Container] = None, frozen: bool = False) -> None:
         super().__setattr__('__frozen', False)
         self.__singletons = {}
         self.__outer_scope = outer_scope
         self.__registrations = {}
+        self.__tracked: set[Any] = set()
 
         class _proto(Protocol):
             pass
@@ -130,12 +163,19 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
                 f'While creating a registration for type {t!r}'
             )
 
-    def __create_instance(self, t: Type[T], registration: Registration) -> T:
+    def __create_instance(
+        self,
+        t: Type[T],
+        registration: Registration,
+        scope: Optional[Container] = None,
+    ) -> T:
         """
         Create an instance of *registration* by recursively resolving ``__init__`` parameters.
 
         :param t: The type being solved for.
         :param registration: The registration details.
+        :param scope: (OPTIONAL) The Container that owns this instance for lifecycle tracking.
+                       Defaults to ``self`` when not provided.
         :raises RegistrationError: When the registration is malformed and instancing is not possible.
         :return: An instance of *T*.
         """
@@ -143,11 +183,17 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
             raise RegistrationError(f'Type mismatch in registration for {t!r}')
         if registration.target is None:
             raise RegistrationError('creating instances from targetless registrations is not supported')
+        instance: T
         if isinstance(registration.target, type):
-            return self.__resolve(cast(Type[T], registration.target))
+            instance = self.__resolve(cast(Type[T], registration.target))
         else:
             factory = registration.target
-            return factory(self)
+            instance = factory(self)
+        owner: Container = scope if scope is not None else self
+        tracked = getattr(owner, '_Container__tracked', None)  # type: ignore[attr-defined]
+        if tracked is not None:
+            tracked.add(instance)
+        return instance
 
     def __is_concrete(self, t: Type[Any]) -> bool:
         """
@@ -271,11 +317,11 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
                     raise RuntimeError('Singleton registration found without owning container')
                 obj = scope.__singletons.get(t)
                 if obj is None:
-                    obj = scope.__create_instance(t, registration)
+                    obj = scope.__create_instance(t, registration, scope=scope)  # type: ignore[arg-type]
                     scope.__singletons[t] = obj
                 return obj
             case Lifetime.TRANSIENT:
-                return self.__create_instance(t, registration)
+                return self.__create_instance(t, registration, scope=scope)  # type: ignore[arg-type]
             case _:  # pragma: no cover
                 raise RuntimeError(f'Unexpected lifetime {registration.lifetime!r}')
 
@@ -289,6 +335,50 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         Any attempt to create registrations after the container has been frozen will result in a :class:`RegistrationError`.
         """
         super().__setattr__('__frozen', True)
+
+    # -- Context Manager Protocol (deterministic destruction) -------------------------------------------
+
+    def __enter__(self) -> Container:
+        """Return *self* to enable context manager usage."""
+        return self
+
+    def __exit__(
+        self,
+        exc_type: Optional[type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],  # type: ignore[name-defined]
+    ) -> None:
+        """
+        Destroy all tracked instances.
+
+        Every object that was directly instantiated by this container (via ``__create_instance``) is
+        torn down by calling its ``close()`` method, if present. The tracked set is then cleared so
+        no object is double-cleaned.
+
+        :param exc_type: (OPTIONAL) Exception type, if one was raised inside the ``with`` block.
+        :param exc_val: (OPTIONAL) The exception instance, if one was raised.
+        :param exc_tb: (OPTIONAL) Traceback object, if one was raised.
+        """
+        for obj in getattr(self, '_Container__tracked', set()):  # type: ignore[attr-defined]
+            close = getattr(obj, 'close', None)
+            if close is not None:
+                close()
+        tracked = getattr(self, '_Container__tracked', None)  # type: ignore[attr-defined]
+        if tracked is not None:
+            tracked.clear()
+
+    def __del__(self) -> None:
+        """Best-effort cleanup on GC."""
+        for obj in getattr(self, '_Container__tracked', []):  # type: ignore[attr-defined]
+            try:
+                close = getattr(obj, 'close', None)
+                if close is not None:
+                    close()
+            except Exception:
+                pass
+        tracked = getattr(self, '_Container__tracked', None)  # type: ignore[attr-defined]
+        if tracked is not None:
+            tracked.clear()
 
 
 __all__ = [

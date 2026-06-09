@@ -1,0 +1,10 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: © 2026 Shaun Wilson
+# SPDX-License-Identifier: MIT
+set -eo pipefail
+if [ -z "$VIRTUAL_ENV" ]; then
+    source .venv/bin/activate
+fi
+cd docs/
+pip install -r requirements.txt
+make clean && make html
