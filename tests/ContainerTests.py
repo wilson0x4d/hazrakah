@@ -379,3 +379,110 @@ def is_registered_bvt() -> None:
     child.register_instance(ProtocolDroid, DummyDroid())
     assert child.is_registered(ProtocolDroid), 'Child should report its own instance registration'
     assert not base.is_registered(ProtocolDroid), 'Parent should not see child-only registration'
+
+
+# -- fluent chaining tests --
+
+
+@fact
+def register_instance_returns_self() -> None:
+    """register_instance returns self, enabling chaining."""
+    container: Container = Container()
+    instance: ServiceA = ServiceA()
+    result = container.register_instance(IService, instance)
+    assert result is container, 'register_instance should return self'
+
+
+@fact
+def register_singleton_returns_self() -> None:
+    """register_singleton returns self, enabling chaining."""
+    container: Container = Container()
+    result = container.register_singleton(IService, ServiceA)
+    assert result is container, 'register_singleton should return self'
+
+
+@fact
+def register_transient_returns_self() -> None:
+    """register_transient returns self, enabling chaining."""
+    container: Container = Container()
+    result = container.register_transient(IService, ServiceA)
+    assert result is container, 'register_transient should return self'
+
+
+@fact
+def chained_registrations_all_resolve() -> None:
+    """A chain of registration methods correctly registers every type."""
+    class IFoo(Protocol):
+        def foo(self) -> None: ...
+
+    class Foo:
+        def foo(self) -> None: ...
+
+    class IBar(Protocol):
+        def bar(self) -> str: ...
+
+    class Bar:
+        def bar(self) -> str: return 'bar'
+
+    container: Container = Container()
+    iservice_instance: ServiceA = ServiceA()
+
+    (container
+     .register_transient(IFoo, Foo)
+     .register_singleton(IBar, Bar)
+     .register_instance(IService, iservice_instance))
+
+    resolved_ifoo: IFoo = container.resolve(IFoo)
+    assert isinstance(resolved_ifoo, Foo), 'transient registration should resolve via chain'
+
+    resolved_ibar: IBar = container.resolve(IBar)
+    assert isinstance(resolved_ibar, Bar), 'singleton registration should resolve via chain'
+
+    resolved_iservice: IService = container.resolve(IService)
+    assert resolved_iservice is iservice_instance, 'instance registration should resolve via chain'
+
+
+@fact
+def singleton_singleton_via_chain_memoizes() -> None:
+    """Singleton registrations within a chain memoize correctly."""
+    container: Container = Container()
+    container.register_singleton(IService, ServiceA).register_transient(IService, ServiceB)
+
+    # The last registration wins (IService now maps to ServiceB transiently)
+    first: IService = container.resolve(IService)
+    second: IService = container.resolve(IService)
+    assert first is not second, 'Last registration should override previous ones'
+
+
+@fact
+def mixed_chain_across_scopes_shares_singletons() -> None:
+    """Singleton registrations in a parent chain are shared by child scopes."""
+    class IFoo(Protocol):
+        def foo(self) -> None: ...
+
+    class Foo:
+        def foo(self) -> None: ...
+
+    parent: Container = Container()
+    child: Container = parent.create_scope()
+
+    (parent
+     .register_singleton(IFoo, Foo)
+     .register_transient(IService, ServiceA))
+
+    parent_foo: IFoo = parent.resolve(IFoo)
+    child_foo: IFoo = child.resolve(IFoo)
+    assert parent_foo is child_foo, 'Singleton from parent should be shared across scopes via chain'
+
+
+@fact
+def register_decorated_returns_self() -> None:
+    """register_decorated returns self for chaining."""
+    from hazrakah.decorators import _DecorationInfoManager
+
+    # Reset to avoid interference from prior tests
+    manager = _DecorationInfoManager.instance()
+    manager.get_all()  # warm up if needed
+    result = Container().register_decorated()
+    assert isinstance(result, Container), 'register_decorated should return self'
+

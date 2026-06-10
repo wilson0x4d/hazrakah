@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: © 2026 Shaun Wilson
 # SPDX-License-Identifier: MIT
 
+from __future__ import annotations
+
 from typing import Any, Callable, Optional, Protocol, Type, TypeAlias, TypeVar, Union, runtime_checkable
 
 from .DependencyResolver import DependencyResolver
@@ -26,7 +28,7 @@ class DependencyRegistry(DependencyResolver, Protocol):
         """
         ...
 
-    def register_instance(self, t: Type[Any], instance: Any) -> None:
+    def register_instance(self, t: Type[Any], instance: Any) -> DependencyRegistry:
         """
         Create an INSTANCE type registration for type *t*.
 
@@ -34,11 +36,12 @@ class DependencyRegistry(DependencyResolver, Protocol):
 
         :param t: The type to register for.
         :param instance: The instance to register.
+        :returns: ``self`` for method chaining (on ``Container`` implementations).
         :raises TypeError: When the provided instance is not an instance of type *t* (type mismatch.)
         """
         ...
 
-    def register_singleton(self, t: Type[Any], target: Optional[Target[Any]] = None) -> None:
+    def register_singleton(self, t: Type[Any], target: Optional[Target[Any]] = None) -> DependencyRegistry:
         """
         Create a SINGLETON type registration for type *t*.
 
@@ -46,10 +49,11 @@ class DependencyRegistry(DependencyResolver, Protocol):
 
         :param t: The type to register for.
         :param target: The type or factory to be used when resolving type *t*.  Omit to use *t* as the target (requires *t* to be a concrete type.)
+        :returns: ``self`` for method chaining (on ``Container`` implementations).
         """
         ...
 
-    def register_transient(self, t: Type[Any], target: Optional[Target[Any]] = None) -> None:
+    def register_transient(self, t: Type[Any], target: Optional[Target[Any]] = None) -> DependencyRegistry:
         """
         Create a TRANSIENT type registration for type *t*.
 
@@ -57,6 +61,7 @@ class DependencyRegistry(DependencyResolver, Protocol):
 
         :param t: The type to register for.
         :param target: The type or factory to be used when resolving type *t*.  Omit to use *t* as the target (requires *t* to be a concrete type.)
+        :returns: ``self`` for method chaining (on ``Container`` implementations).
         """
         ...
 

@@ -1,10 +1,9 @@
 # rtd-specific
 sphinx
+sphinx_design
 sphinx-autodoc-typehints
-sphinx_rtd_theme
 furo
+pygments
+accessible-pygments
 
 # from pyproject.toml
-cryptography==48.0.0
-falcon==4.2.0
-pyjwt==2.12.1

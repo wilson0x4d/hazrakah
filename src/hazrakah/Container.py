@@ -74,26 +74,55 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
     ``set``. When a container is used as a context manager (either directly or via ``create_scope()``,
     all tracked objects are torn down by calling their ``close()`` method at the end of the scope.
 
-    Example
-    -------
+    Example (Basic)
+    ---------------
 
-    Direct container as context manager::
+    .. code:: python
+
+        container = Container()
+        container.register_transient(Foo)
+        foo = container.resolve(Foo)
+
+        # supports scopes:
+        scoped_container = container.create_scope()
+        scoped_container.register_transient(Foo)
+        foo = scoped_container.resolve(Foo)
+
+    Example (Fluent)
+    ----------------
+
+    Registrations return ``self``, so they can be chained. The following demonstrates this:
+
+
+    .. code:: python
+
+        container = (
+            Container()
+            .register_singleton(Greeter, GreeterImpl)
+            .register_transient(Formatter)
+        )
+        greeter = c.resolve(Greeter)
+
+    Example (Context Manager)
+    -------------------------
+
+    The container can be used as a context manager for both direct scoping and nested scopes:
+
+
+    .. code:: python
 
         with Container() as container:
             container.register_transient(Foo)
-            foo = container.resolve(Foo)
-        # Foo is destroyed here (deterministically, before the next statement executes)
-
-    Child-scope pattern for per-request / per-transaction usage::
-
-        parent = Container()
-        with parent.create_scope() as scope:
-            scope.register_transient(Foo)
-            foo = scope.resolve(Foo)
-        # Foo destroyed at scope exit; parent unaffected
+            with Container() as scoped:
+                scoped.register_transient(Bar)
+                foo = scoped.resolve(Foo)
+                assert foo is not None
+            bar = container.resolve(Bar)  # raises Error (not in scope)
+            assert foo.is_closed is True  # context manager scope closes
 
     :ivar outer_scope: The parent container, or ``None`` for the root.
     :vartype outer_scope: Optional[Container]
+
 
     .. automethod:: __enter__
     .. automethod:: __exit__
@@ -258,7 +287,15 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         r, c = self.__get_registration(t)
         return r is not None
 
-    def register_instance(self, t: Type[Any], instance: Any) -> None:
+    def register_instance(self, t: Type[Any], instance: Any) -> Container:
+        """
+        Register a pre-existing *instance* for type *t*.
+
+        :param t: The interface or abstract type to bind the instance to.
+        :param instance: An object that must be an instance of *t*.
+        :returns: ``self`` for method chaining.
+        :raises TypeError: When *instance* is not an instance of *t*.
+        """
         self.__check_frozen(t)
         if not isinstance(instance, t):
             raise TypeError(f'{instance!r} is not an instance of type {t!r}')
@@ -267,8 +304,18 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
             lifetime=Lifetime.INSTANCE,
             instance=instance,
         )
+        return self
 
-    def register_singleton(self, t: Type[Any], target: Optional[Target[Any]] = None) -> None:
+    def register_singleton(self, t: Type[Any], target: Optional[Target[Any]] = None) -> Container:
+        """
+        Create a SINGLETON type registration for type *t*.
+
+        Every resolve of *t* will result in a single, shared instance of *t*.
+
+        :param t: The type to register for.
+        :param target: The type or factory to be used when resolving type *t*.  Omit to use *t* as the target (requires *t* to be a concrete type.)
+        :returns: ``self`` for method chaining.
+        """
         self.__check_frozen(t)
         if target is None:
             target = t
@@ -277,10 +324,21 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
             lifetime=Lifetime.SINGLETON,
             target=target,
         )
+        return self
 
-    def register_transient(self, t: Type[Any], target: Optional[Target[Any]] = None) -> None:
+    def register_transient(self, t: Type[Any], target: Optional[Target[Any]] = None) -> Container:
+        """
+        Create a TRANSIENT type registration for type *t*.
+
+        Every resolve of *t* will result in a new instance of *t*.
+
+        :param t: The type to register for.
+        :param target: The type or factory to be used when resolving type *t*.  Omit to use *t* as the target (requires *t* to be a concrete type.)
+        :returns: ``self`` for method chaining.
+        """
         self.__check_frozen(t)
         self.__register_transient(t, target)
+        return self
 
     @overload
     def resolve(self, t: Type[T]) -> T:
@@ -325,11 +383,13 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
             case _:  # pragma: no cover
                 raise RuntimeError(f'Unexpected lifetime {registration.lifetime!r}')
 
-    def register_decorated(self) -> None:
+    def register_decorated(self) -> Container:
         """
         Create registrations based on discovered decorators ``@singleton``, ``@transient``, and ``@instanced``.
 
-         This method is idempotent -- repeated calls overwrite registrations (last-in-wins).
+        This method is idempotent -- repeated calls overwrite registrations (last-in-wins).
+
+        :returns: ``self`` for method chaining.
         """
         # Import lazily to avoid circular import at module load time.
         from .decorators import _DecorationInfoManager, _sort_decoration_infos
@@ -351,6 +411,8 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
                             else info.target(self)  # type: ignore[call-arg]
                         )
                     )
+
+        return self
 
     def create_scope(self, frozen: Optional[bool] = False) -> Container:
         return Container(outer_scope=self, frozen=frozen or getattr(self, '__frozen'))

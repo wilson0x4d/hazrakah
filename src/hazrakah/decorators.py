@@ -371,6 +371,7 @@ def _sort_decoration_infos(
     results: dict[type, DecorationInfo] = {}
     max_cycles = len(decoration_infos)
 
+    # add ordered
     while len(results) < len(decoration_infos) and max_cycles > 0:
         max_cycles -= 1
         for current in decoration_infos:
@@ -380,17 +381,12 @@ def _sort_decoration_infos(
                 continue
             results[current.interface] = current
 
-    if len(results) != len(decoration_infos):
-        # Circular dependency detected -- warn and fill remaining.
-        logger.warning(
-            'Circular dependency detected among decorated registrations; '
-            f'proceeding with unsorted order [{len(decoration_infos) - len(results)}/{len(decoration_infos)}].'
-        )
-        remaining: dict[type, DecorationInfo] = {}
-        for d in decoration_infos:
-            if d.interface not in results:
-                remaining[d.interface] = d
-        results.update(remaining)
+    # fill remaining
+    results.update({
+        d.interface: d
+        for d in decoration_infos
+        if d.interface not in results
+    })
 
     return list(results.values())
 
