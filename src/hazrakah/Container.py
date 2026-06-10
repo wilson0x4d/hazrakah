@@ -325,6 +325,33 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
             case _:  # pragma: no cover
                 raise RuntimeError(f'Unexpected lifetime {registration.lifetime!r}')
 
+    def register_decorated(self) -> None:
+        """
+        Create registrations based on discovered decorators ``@singleton``, ``@transient``, and ``@instanced``.
+
+         This method is idempotent -- repeated calls overwrite registrations (last-in-wins).
+        """
+        # Import lazily to avoid circular import at module load time.
+        from .decorators import _DecorationInfoManager, _sort_decoration_infos
+
+        infos = _DecorationInfoManager.instance().get_all()
+        sorted_infos = _sort_decoration_infos(infos)
+        for info in sorted_infos:
+            match info.lifetime:
+                case Lifetime.SINGLETON:
+                    self.register_singleton(info.interface, info.target)  # type: ignore[arg-type]
+                case Lifetime.TRANSIENT:
+                    self.register_transient(info.interface, info.target)  # type: ignore[arg-type]
+                case Lifetime.INSTANCE:
+                    self.register_instance(
+                        info.interface,
+                        (
+                            self.resolve(info.target)
+                            if isinstance(info.target, type)
+                            else info.target(self)  # type: ignore[call-arg]
+                        )
+                    )
+
     def create_scope(self, frozen: Optional[bool] = False) -> Container:
         return Container(outer_scope=self, frozen=frozen or getattr(self, '__frozen'))
 
@@ -335,8 +362,6 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         Any attempt to create registrations after the container has been frozen will result in a :class:`RegistrationError`.
         """
         super().__setattr__('__frozen', True)
-
-    # -- Context Manager Protocol (deterministic destruction) -------------------------------------------
 
     def __enter__(self) -> Container:
         """Return *self* to enable context manager usage."""

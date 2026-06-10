@@ -5,6 +5,7 @@ from .Container import Container
 from .DependencyRegistry import DependencyRegistry, Factory, Target
 from .DependencyResolver import DependencyResolver, ScopedDependencyResolver
 from .RegistrationError import RegistrationError
+from .decorators import Lifetime, singleton, transient, instanced
 
 
 __version__ = '0.0.0'
@@ -15,7 +16,11 @@ __all__ = [
     'DependencyRegistry',
     'DependencyResolver',
     'Factory',
+    'Lifetime',
     'RegistrationError',
     'ScopedDependencyResolver',
-    'Target'
+    'Target',
+    'singleton',
+    'transient',
+    'instanced',
 ]

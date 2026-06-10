@@ -29,7 +29,7 @@ class NestedChild(CloseableResource):
 
 
 class ParentService(CloseableResource):
-    """A service with a child dependency — both should be tracked independently."""
+    """A service with a child dependency (both should be tracked independently.)"""
 
     def __init__(self, _child: NestedChild) -> None:  # type: ignore[no-untyped-init]
         super().__init__()
@@ -64,9 +64,9 @@ def direct_container_context_manager_clears_tracked_set() -> None:
     """After context exit, the tracked set must be cleared so no double-cleanup occurs."""
     with Container() as container:
         container.register_transient(CloseableResource)
-        instance = container.resolve(CloseableResource)
+        _ = container.resolve(CloseableResource)
 
-    # Resolve another instance in a new scope — it should not find any stale references.
+    # Resolve another instance in a new scope -- it should not find any stale references.
     second_instance = CloseableResource()
     assert not second_instance.closed, 'Freshly created instances must not be closed.'
 
