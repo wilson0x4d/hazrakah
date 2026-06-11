@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: © 2026 Shaun Wilson
 # SPDX-License-Identifier: MIT
 
-"""Ergonomic decorator registration for dependency-injection lifetimes.
+"""
+Ergonomic decorator registration for dependency-injection lifetimes.
 
 Decorators mark intent; ``register_decorated()`` performs actual registration.
 Each decorator is a no-op at decoration time -- it stores metadata in a global
@@ -37,7 +38,8 @@ T = TypeVar('T')
 
 @dataclass(frozen=True)
 class DecorationInfo:
-    """Metadata emitted by a decorator for one interface of the decorated target.
+    """
+    Metadata emitted by a decorator for one interface of the decorated target.
 
     :ivar lifetime: The lifecycle type (singleton, transient, or instance).
     :ivar target: The original callable / class that was decorated.
@@ -71,7 +73,8 @@ class _DecorationInfoManager:
         return cls.__instance
 
     def register(self, info: DecorationInfo) -> None:
-        """Store or replace an entry for *info.interface*.
+        """
+        Store or replace an entry for *info.interface*.
 
         If an entry already exists for the same interface a warning is logged.
         If the existing entry has a different lifetime a :class:`RegistrationError`
@@ -103,15 +106,14 @@ _HAZRAKAH_LIFECYCLE_ATTR = '__hazrakah_lifecycle'
 def _raise_if_provides_decorated(unwrapped: Any) -> None:
     if hasattr(unwrapped, '__hazrakah_provides'):
         raise RegistrationError(
-            f'cannot apply ``@{unwrapped.__name__}'
-            f'`` to a class already decorated with ``@provides``. '
-            'Use either a lifecycle decorator (@singleton/@transient/@instanced) '
-            'OR @provides — not both.'
+            f'cannot apply ``@{unwrapped.__name__}`` to a class already decorated with ``@provides``. '
+            'Use either a lifecycle decorator (@singleton/@transient/@instanced) OR @provides — not both.'
         )
 
 
 def _infer_depends_on(cls: type) -> tuple[type, ...]:
-    """Return unique class-referencing types from *cls*.__init__ annotations.
+    """
+    Return unique class-referencing types from *cls*.__init__ annotations.
 
     Walks every parameter annotation in ``__init__`` and collects any entry that is a concrete
     class (not a generic, TypeVar, protocol, or abstract base).  Preserves insertion order so
@@ -188,7 +190,8 @@ def singleton(
     types: Optional[Union[type, tuple[type, ...]]] = None,
     depends_on: tuple[type, ...] = (),
 ) -> Any:
-    """Register *target* as a singleton.
+    """
+    Register *target* as a singleton.
 
     Usage::
 
@@ -230,13 +233,12 @@ def singleton(
                 f'``as=`` is required for factory function "{target.__name__}".'
             )
 
-    interfaces: tuple[type, ...]
     if types is None:
         assert inferred_types is not None
         assert isinstance(inferred_types, type)
         interfaces = (inferred_types,)  # type: ignore[assignment]
     elif isinstance(types, tuple):
-        interfaces = types
+        interfaces = types  # type: ignore[assignment]
     else:
         interfaces = (types,)
 

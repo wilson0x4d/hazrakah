@@ -328,7 +328,7 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
             if provided_types is not None:
                 # `t` has `@provides`, so register `instance` for all provided types
                 for provides_t in provided_types | {t}:
-                    self.__register_for_lifetime(provides_t, Lifetime.INSTANCE, instance)  # type: ignore[bad-argument-type]
+                    self.__register_for_lifetime(provides_t, Lifetime.INSTANCE, instance)  # type: ignore[bad-argument-type, arg-type]
             if isinstance(t, type):
                 self.__register_for_lifetime(t, Lifetime.INSTANCE, instance)
             else:

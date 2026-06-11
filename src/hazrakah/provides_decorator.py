@@ -26,10 +26,8 @@ T = TypeVar('T')
 def _raise_if_lifetime_decorated(unwrapped: Any) -> None:
     if hasattr(unwrapped, '__hazrakah_lifetime'):
         raise RegistrationError(
-            f'cannot apply ``@{unwrapped.__name__}'
-            f'`` to a class already decorated with ``@provides``. '
-            'Use either a lifecycle decorator (@singleton/@transient/@instanced) '
-            'OR @provides — not both.'
+            f'cannot apply ``@{unwrapped.__name__}`` to a class already decorated with ``@provides``. '
+            'Use either a lifecycle decorator (@singleton/@transient/@instanced) OR @provides — not both.'
         )
 
 
