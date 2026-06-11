@@ -179,7 +179,7 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
                     return getattr(mod, annotation)
         return annotation
 
-    def __check_frozen(self, t: Type[T]) -> None:
+    def __check_frozen(self, t: Type[T] | object) -> None:
         """
         Checks if the container is frozen, if frozen blocks registration by raising ``RegistrationError``.
 
@@ -189,7 +189,7 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         if getattr(self, '__frozen'):
             raise RegistrationError(
                 f'Cannot modify a frozen container; '
-                f'While creating a registration for type {t!r}'
+                f'While creating a registration for {t!r}'
             )
 
     def __create_instance(
@@ -246,14 +246,20 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
             return False
         return True
 
-    def __register_transient(self, t: Type[Any], target: Optional[Target[Any]] = None) -> None:
-        if target is None:
-            target = t
-        self.__registrations[t] = Registration(
-            t=t,
-            lifetime=Lifetime.TRANSIENT,
-            target=target
-        )
+    def __get_provided_types(self, t: Type[Any] | object) -> set[type] | None:
+        """
+        Discover ``__hazrakah_provides`` metadata from *t*.
+
+        :returns: None if not found, otherwise a ``set`` of types that are provided by `t`.
+        """
+        provided_types = getattr(t, '__hazrakah_provides', None)
+        if provided_types is None:
+            return None
+        else:
+            types = set[type]()
+            for provides_t in provided_types:
+                types.add(provides_t)
+            return types if len(types) > 0 else None
 
     def __resolve(self, t: type[T]) -> T:
         if not inspect.isclass(t):
@@ -287,23 +293,48 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         r, c = self.__get_registration(t)
         return r is not None
 
-    def register_instance(self, t: Type[Any], instance: Any) -> Container:
+    def register_instance(self, t: Type[Any] | object, instance: Optional[Any] = None) -> Container:
         """
         Register a pre-existing *instance* for type *t*.
 
-        :param t: The interface or abstract type to bind the instance to.
-        :param instance: An object that must be an instance of *t*.
+        :param t: The type to bind the instance to.
+        :param instance: (OPTIONAL) An object that must be an instance of *t*.  Omit to construct a `t` instance automatically.
         :returns: ``self`` for method chaining.
         :raises TypeError: When *instance* is not an instance of *t*.
         """
         self.__check_frozen(t)
-        if not isinstance(instance, t):
-            raise TypeError(f'{instance!r} is not an instance of type {t!r}')
-        self.__registrations[t] = Registration(
-            t=t,
-            lifetime=Lifetime.INSTANCE,
-            instance=instance,
-        )
+        if instance is not None:
+            # explicit `instance` --> `t` registration logic
+            if not isinstance(t, type):
+                # in this use-case, `t` must be a type arg because `instance` was provided (explicit registration.)
+                raise RegistrationError(
+                    '`t` must be a valid type arg when `instance` is provided.'
+                )
+            # skip isinstance for Protocol types that aren't @runtime_checkable;
+            # this is a "best attempt" at type enforcement, but we can't enforce the unenforcable.
+            try:
+                isinstance(instance, t)
+            except TypeError:
+                pass  # not a runtime-checkable type; nothing to validate
+            else:
+                if not isinstance(instance, t):
+                    raise TypeError(f'{instance!r} is not an instance of type {t!r}')
+            self.__register_for_lifetime(t, Lifetime.INSTANCE, instance)
+        else:
+            # inferred `instance` registration logic
+            instance = self.resolve(t) if isinstance(t, type) else t
+            # inspect for `@provides` usage
+            provided_types = self.__get_provided_types(t)
+            if provided_types is not None:
+                # `t` has `@provides`, so register `instance` for all provided types
+                for provides_t in provided_types | {t}:
+                    self.__register_for_lifetime(provides_t, Lifetime.INSTANCE, instance)  # type: ignore[bad-argument-type]
+            if isinstance(t, type):
+                self.__register_for_lifetime(t, Lifetime.INSTANCE, instance)
+            else:
+                # when `t` is an instance, the type identify of the instance is registered
+                t = type(t)
+                self.__register_for_lifetime(t, Lifetime.INSTANCE, instance)
         return self
 
     def register_singleton(self, t: Type[Any], target: Optional[Target[Any]] = None) -> Container:
@@ -317,14 +348,39 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         :returns: ``self`` for method chaining.
         """
         self.__check_frozen(t)
-        if target is None:
-            target = t
-        self.__registrations[t] = Registration(
-            t=t,
-            lifetime=Lifetime.SINGLETON,
-            target=target,
-        )
+        if target is not None:
+            # explicit `t` --> `target` registration logic
+            if not isinstance(t, type):
+                # in this use-case, `t` must be a type arg because `target` was provided (explicit registration.)
+                raise RegistrationError(
+                    '`t` must be a valid type arg when `target` is provided.'
+                )
+            self.__register_for_lifetime(t, Lifetime.SINGLETON, target)
+        else:
+            # inferred `target` registration logic
+            provided_types = self.__get_provided_types(t)
+            if provided_types is not None:
+                # `t` has `@provides`, so register `t` for all provided types
+                for provides_t in provided_types | {t}:
+                    self.__register_for_lifetime(provides_t, Lifetime.SINGLETON, t)  # type: ignore[bad-argument-type]
+            else:
+                # `t` does not have `@provides`, so self-register `t`
+                self.__register_for_lifetime(t, Lifetime.SINGLETON, t)
         return self
+
+    def __register_for_lifetime(self, t: Type[Any], lifetime: Lifetime, target: Any) -> None:
+        if lifetime == Lifetime.INSTANCE:
+            self.__registrations[t] = Registration(
+                t=t,
+                lifetime=lifetime,
+                instance=target
+            )
+        else:
+            self.__registrations[t] = Registration(
+                t=t,
+                lifetime=lifetime,
+                target=target
+            )
 
     def register_transient(self, t: Type[Any], target: Optional[Target[Any]] = None) -> Container:
         """
@@ -337,7 +393,24 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         :returns: ``self`` for method chaining.
         """
         self.__check_frozen(t)
-        self.__register_transient(t, target)
+        if target is not None:
+            # explcit `t` --> `target` registration logic
+            if not isinstance(t, type):
+                # in this use-case, `t` must be a type arg because `target` was provided (explicit registration.)
+                raise RegistrationError(
+                    '`t` must be a valid type arg when `target` is provided.'
+                )
+            self.__register_for_lifetime(t, Lifetime.TRANSIENT, target)
+        else:
+            # inferred `target` registration logic
+            provided_types = self.__get_provided_types(t)
+            if provided_types is not None:
+                # @provides discovered -- register under *t* and all provided interfaces.
+                for provides_t in provided_types | {t}:
+                    self.__register_for_lifetime(provides_t, Lifetime.TRANSIENT, t)  # type: ignore[bad-argument-type]
+            else:
+                # `t` does not have `@provides`, so self-register `t`
+                self.__register_for_lifetime(t, Lifetime.TRANSIENT, t)
         return self
 
     @overload
@@ -361,7 +434,7 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         if registration is None:
             if self.__is_concrete(t):
                 # implicit reg for concrete types
-                self.__register_transient(t, t)
+                self.register_transient(t)
                 return self.resolve(t)
             else:
                 if is_optional:
@@ -373,10 +446,16 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
             case Lifetime.SINGLETON:
                 if scope is None:
                     raise RuntimeError('Singleton registration found without owning container')
-                obj = scope.__singletons.get(t)
+                # When target is a concrete type, use it as the shared singleton cache key
+                # so all provided interfaces sharing this registration get the same instance.
+                cache_key = t
+                tgt = registration.target
+                if tgt is not None and isinstance(tgt, type) and tgt is not t:
+                    cache_key = tgt
+                obj = scope.__singletons.get(cache_key)
                 if obj is None:
                     obj = scope.__create_instance(t, registration, scope=scope)  # type: ignore[arg-type]
-                    scope.__singletons[t] = obj
+                    scope.__singletons[cache_key] = obj
                 return obj
             case Lifetime.TRANSIENT:
                 return self.__create_instance(t, registration, scope=scope)  # type: ignore[arg-type]
@@ -392,7 +471,7 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         :returns: ``self`` for method chaining.
         """
         # Import lazily to avoid circular import at module load time.
-        from .decorators import _DecorationInfoManager, _sort_decoration_infos
+        from .lifetime_decorators import _DecorationInfoManager, _sort_decoration_infos
 
         infos = _DecorationInfoManager.instance().get_all()
         sorted_infos = _sort_decoration_infos(infos)

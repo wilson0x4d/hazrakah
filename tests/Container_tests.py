@@ -478,7 +478,7 @@ def mixed_chain_across_scopes_shares_singletons() -> None:
 @fact
 def register_decorated_returns_self() -> None:
     """register_decorated returns self for chaining."""
-    from hazrakah.decorators import _DecorationInfoManager
+    from hazrakah.lifetime_decorators import _DecorationInfoManager
 
     # Reset to avoid interference from prior tests
     manager = _DecorationInfoManager.instance()

@@ -17,11 +17,13 @@ from hazrakah import (
     singleton,
     transient,
 )
-from hazrakah.decorators import DecorationInfo as _DecoInfo
-from hazrakah.decorators import (
+from hazrakah.lifetime_decorators import (
+    DecorationInfo as _DecoInfo,
     _DecorationInfoManager,
+    _raise_if_provides_decorated,
     _sort_decoration_infos,
 )
+from hazrakah.provides_decorator import provides
 from punit import fact, teardown
 
 
@@ -470,3 +472,85 @@ def lifetime_enum_values_are_correct() -> None:
     assert Lifetime.TRANSIENT.value == 1
     assert Lifetime.SINGLETON.value == 2
     assert Lifetime.INSTANCE.value == 3
+
+
+@fact
+def raise_if_provides_decorated_raises_when_class_has_provides_marker() -> None:
+
+    @provides()
+    class MyClass:
+        pass
+
+    try:
+        _raise_if_provides_decorated(MyClass)
+    except RegistrationError as exc:
+        assert 'cannot apply' in str(exc).lower()
+        return
+    assert False, 'expected RegistrationError'
+
+
+@fact
+def raise_if_provides_decorated_does_not_raise_when_no_provides_marker() -> None:
+
+    class MyClass:
+        pass
+
+    # Should not raise for a plain class.
+    _raise_if_provides_decorated(MyClass)
+
+
+@fact
+def singleton_incompatible_with_provides() -> None:
+    """Applying @singleton on an @provides-decorated class raises at decoration time."""
+
+    class IFoo:
+        pass
+
+    @provides()
+    class MyClass:
+        pass
+
+    try:
+        singleton(types=IFoo)(MyClass)  # type: ignore[arg-type]
+    except RegistrationError as exc:
+        assert 'cannot apply' in str(exc).lower()
+        return
+    assert False, 'expected RegistrationError'
+
+
+@fact
+def transient_incompatible_with_provides() -> None:
+    """Applying @transient on an @provides-decorated class raises at decoration time."""
+
+    class IFoo:
+        pass
+
+    @provides()
+    class MyClass:
+        pass
+
+    try:
+        transient(types=IFoo)(MyClass)  # type: ignore[arg-type]
+    except RegistrationError as exc:
+        assert 'cannot apply' in str(exc).lower()
+        return
+    assert False, 'expected RegistrationError'
+
+
+@fact
+def instanced_incompatible_with_provides() -> None:
+    """Applying @instanced on an @provides-decorated class raises at decoration time."""
+
+    class IFoo:
+        pass
+
+    @provides()
+    class MyClass:
+        pass
+
+    try:
+        instanced(types=IFoo)(MyClass)  # type: ignore[arg-type]
+    except RegistrationError as exc:
+        assert 'cannot apply' in str(exc).lower()
+        return
+    assert False, 'expected RegistrationError'

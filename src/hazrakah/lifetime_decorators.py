@@ -100,6 +100,16 @@ class _DecorationInfoManager:
 _HAZRAKAH_LIFECYCLE_ATTR = '__hazrakah_lifecycle'
 
 
+def _raise_if_provides_decorated(unwrapped: Any) -> None:
+    if hasattr(unwrapped, '__hazrakah_provides'):
+        raise RegistrationError(
+            f'cannot apply ``@{unwrapped.__name__}'
+            f'`` to a class already decorated with ``@provides``. '
+            'Use either a lifecycle decorator (@singleton/@transient/@instanced) '
+            'OR @provides — not both.'
+        )
+
+
 def _infer_depends_on(cls: type) -> tuple[type, ...]:
     """Return unique class-referencing types from *cls*.__init__ annotations.
 
@@ -185,6 +195,8 @@ def singleton(
         @singleton                  →  self-as (classes only)
         @singleton(types=IFoo)         →  explicit interface
         @singleton(types=(IFoo, IBar)) →  multiple interfaces
+
+    :raises RegistrationError: If *target* is already decorated with ``@provides`` — the two decorators are incompatible.
     """
     if target is None:
         # @singleton() or @singleton(types=IFoo) -- return proxy capturing types/depends_on.
@@ -206,6 +218,8 @@ def singleton(
 
     if not is_class:
         _validate_factory(target)
+
+    _raise_if_provides_decorated(unwrapped)
 
     inferred_types: Optional[Union[type, tuple[type, ...]]] = None
     if types is None:
@@ -267,6 +281,8 @@ def transient(
     if not is_class:
         _validate_factory(target)
 
+    _raise_if_provides_decorated(unwrapped)
+
     inferred_types: Optional[Union[type, tuple[type, ...]]] = None
     if types is None:
         if is_class:
@@ -325,6 +341,8 @@ def instanced(
 
     if not is_class:
         _validate_factory(target)
+
+    _raise_if_provides_decorated(unwrapped)
 
     inferred_types: Optional[Union[type, tuple[type, ...]]] = None
     if types is None:
