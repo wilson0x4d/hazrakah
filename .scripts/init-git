@@ -1,0 +1,12 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: © 2026 Shaun Wilson
+# SPDX-License-Identifier: MIT
+##
+set -euo pipefail
+
+# initialize
+export SCRIPT_DIR="$(realpath '.scripts')"
+chmod +x -R "$SCRIPT_DIR/githooks"
+cp -v $SCRIPT_DIR/githooks/* .git/hooks/
+git config core.hooksPath ".git/hooks" 2>/dev/null || true
+echo "✅ initialized git hooks" >&2

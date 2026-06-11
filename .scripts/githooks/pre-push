@@ -1,0 +1,33 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: © 2023 Shaun Wilson
+# SPDX-License-Identifier: LicenseRef-Proprietary
+##
+# Git pre-push hook — runs .scripts/run-tests before allowing a push.
+# If the test script exits non-zero, the push is rejected.
+set -eo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# Locate run-tests: prefer .scripts/run-tests relative to repo root
+RUN_TESTS="$REPO_ROOT/.scripts/run-tests"
+
+if [ ! -x "$RUN_TESTS" ]; then
+    echo "⚠️  .scripts/run-tests not found or not executable at $RUN_TESTS" >&2
+    echo "    Aborting push." >&2
+    exit 1
+fi
+
+echo "Running tests before push..." >&2
+cd "$REPO_ROOT"
+"$RUN_TESTS" "$@"
+RC=$?
+
+if [ $RC -ne 0 ]; then
+    echo "" >&2
+    echo "❌ Tests failed (exit code $RC). Push aborted." >&2
+    echo "   Fix the violations, then try pushing again." >&2
+    exit $RC
+fi
+
+exit 0
