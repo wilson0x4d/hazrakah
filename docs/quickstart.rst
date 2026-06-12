@@ -137,6 +137,52 @@ Declare which interfaces a class implements; registration binds to **all** of th
     assert a is b                       # shared cache across all provided interfaces
 
 
+How @provides Works
+~~~~~~~~~~~~~~~~~~~
+
+The ``@provides`` decorator is a **passive marker** -- it stores metadata only, with zero registration logic at decoration time. Activation depends entirely on how the container later registers the decorated class.
+
+**@provides activates** when you call ``register_singleton``, ``register_transient``, or ``register_instance`` with **no second argument** (no explicit type override):
+
+.. code-block:: python
+
+    @provides(IFoo, IBar)
+    class MultiImpl: ...
+
+    c.register_singleton(MultiImpl)  # multi-registers under IFoo + IBar + MultiImpl
+    c.resolve(IFoo)                  # works -- @provides activated
+    c.resolve(IBar)                  # works -- @provides activated
+
+**@provides does NOT activate** when you provide an explicit type argument to a registration method:
+
+.. code-block:: python
+
+    @provides(IBar)
+    class MultiImpl: ...
+
+    c.register_singleton(IFoo, MultiImpl)  # only IFoo is registered
+    c.resolve(IFoo)                        # works -- explicit registration
+    c.resolve(IBar)                        # raises KeyError -- @provides was ignored
+
+This is intentional. The second positional argument on any ``register_*`` method is the **explicit type override**. When you provide it, you are telling the container exactly which key to register against -- and ``@provides`` does not interfere.
+
++-----------------------------------------------+------------------------+-------------------------------------+
+| Registration call                             | @provides activates?   | Registered keys                     |
++-----------------------------------------------+------------------------+-------------------------------------+
+| ``register_singleton(MyClass)``               | YES                    | MyClass + all @provides interfaces  |
++-----------------------------------------------+------------------------+-------------------------------------+
+| ``register_singleton(IFoo, MyClass)``         | NO                     | Only IFoo                           |
++-----------------------------------------------+------------------------+-------------------------------------+
+| ``register_transient(MyClass)``               | YES                    | MyClass + all @provides interfaces  |
++-----------------------------------------------+------------------------+-------------------------------------+
+| ``register_transient(IFoo, MyClass)``         | NO                     | Only IFoo                           |
++-----------------------------------------------+------------------------+-------------------------------------+
+| ``register_instance(my_obj)`` (no instance)   | YES                    | type(obj) + all @provides interfaces|
++-----------------------------------------------+------------------------+-------------------------------------+
+| ``register_instance(IFoo, my_obj)`` (explicit)| NO                     | Only IFoo                           |
++-----------------------------------------------+------------------------+-------------------------------------+
+
+
 Built-in Mock Library
 ~~~~~~~~~~~~~~~~~~~~~
 

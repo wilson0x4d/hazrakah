@@ -523,6 +523,45 @@ def register_singleton_when_exlicit_type():
 
 
 @fact
+def register_singleton_with_provides_same_interface_ignores_marker():
+    """when @provides declares the same interface as the explicit registration key,
+    ``@provides`` must still be ignored. only the explicitly registered type gets a binding.
+
+    this is the 'identity case' gap test: it confirms that even when the provided type
+    equals the registration key passed to register_*, no extra or duplicate registrations
+    occur from ``@provides`` metadata -- because explicit registrations completely bypass
+    the ``@provides`` discovery path.
+    """
+
+    class IFoo(Protocol):
+        def foo(self) -> None:
+            ...
+
+    @provides(IFoo)
+    class MyClass:
+        def __init__(self):
+            self.value = 'x'
+
+    c = Container()
+    # Explicit registration for the same interface that @provides declares.
+    c.register_singleton(IFoo, MyClass)
+
+    # IFoo is registered (from the explicit registration).
+    assert c.is_registered(IFoo), 'IFoo should be registered via the explicit argument.'
+
+    # MyClass itself must NOT be auto-registered -- when target is provided,
+    # @provides metadata is completely bypassed per design.
+    assert not c.is_registered(MyClass), (
+        'MyClass should NOT be auto-registered when an explicit type arg is provided; '
+        '@provides only activates with no explicit type argument.'
+    )
+
+    r1 = c.resolve(IFoo)
+    assert r1 is not None
+    assert isinstance(r1, MyClass)
+
+
+@fact
 def register_transient_returns_self() -> None:
     """register_transient returns self, enabling chaining."""
     container: Container = Container()

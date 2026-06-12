@@ -301,6 +301,16 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         :param instance: (OPTIONAL) An object that must be an instance of *t*.  Omit to construct a `t` instance automatically.
         :returns: ``self`` for method chaining.
         :raises TypeError: When *instance* is not an instance of *t*.
+
+        Note on @provides
+        -----------------
+        The ``@provides`` decorator on the target type is **only discovered when *instance* is omitted**
+        (no explicit second argument). In that case, the container discovers ``__hazrakah_provides``
+        metadata and multi-registers the target under every provided interface.
+
+        When *instance* IS provided (explicit registration), @provides metadata on the target class
+        is **completely ignored**. Only the type specified by *t* is registered. This applies
+        regardless of whether the concrete class implements additional interfaces via @provides.
         """
         self.__check_frozen(t)
         if instance is not None:
@@ -346,6 +356,28 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         :param t: The type to register for.
         :param target: The type or factory to be used when resolving type *t*.  Omit to use *t* as the target (requires *t* to be a concrete type.)
         :returns: ``self`` for method chaining.
+
+        Note on @provides
+        -----------------
+        The ``@provides`` decorator on *target* is **only discovered when *target* is omitted**
+        (no explicit second argument). In that case, the container discovers ``__hazrakah_provides``
+        metadata and multi-registers *t* under every provided interface.
+
+        When *target* IS provided (explicit registration), @provides metadata on the target class
+        is **completely ignored**. Only the type specified by *t* is registered. This applies
+        regardless of whether the concrete class implements additional interfaces via @provides.
+
+        Examples
+        --------
+        # @provides activates -- multi-registers under IFoo, IBar, and MyImpl:
+
+        @provides(IFoo, IBar)
+        class MyImpl: ...
+        c.register_singleton(MyImpl)  # no second arg
+
+        # @provides does NOT activate -- only IFoo is registered:
+
+        c.register_singleton(IFoo, MyImpl)  # explicit type override
         """
         self.__check_frozen(t)
         if target is not None:
@@ -395,6 +427,28 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         :param t: The type to register for.
         :param target: The type or factory to be used when resolving type *t*.  Omit to use *t* as the target (requires *t* to be a concrete type.)
         :returns: ``self`` for method chaining.
+
+        Note on @provides
+        -----------------
+        The ``@provides`` decorator on *target* is **only discovered when *target* is omitted**
+        (no explicit second argument). In that case, the container discovers ``__hazrakah_provides``
+        metadata and multi-registers *t* under every provided interface.
+
+        When *target* IS provided (explicit registration), @provides metadata on the target class
+        is **completely ignored**. Only the type specified by *t* is registered. This applies
+        regardless of whether the concrete class implements additional interfaces via @provides.
+
+        Examples
+        --------
+        # @provides activates -- multi-registers under IFoo, IBar, and MyImpl:
+
+        @provides(IFoo, IBar)
+        class MyImpl: ...
+        c.register_transient(MyImpl)  # no second arg
+
+        # @provides does NOT activate -- only IFoo is registered:
+
+        c.register_transient(IFoo, MyImpl)  # explicit type override
         """
         self.__check_frozen(t)
         if target is not None:
@@ -433,7 +487,7 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
             # if we cannot instantiate the resulting type, because it is Optional (unioned with `None`)
             # we will allow the passing of None in leiu.
             org_args = get_args(t)
-            is_optional = org_args and org_args[-1] is None
+            is_optional = org_args is not None and org_args[-1] is None
             t = [e for e in org_args if e is not NoneType][0]
         registration, scope = self.__get_registration(t)
         if registration is None:

@@ -213,6 +213,24 @@ b = container.resolve(IBar)
 assert a is b  # same instance — shared cache across all provided interfaces
 ```
 
+### When @provides Activates vs. Does Not Activate
+
+`@provides` is a **passive marker** -- activation depends entirely on how the container registers the decorated class.
+
+- **Activates**: when you call `register_singleton`, `register_transient`, or `register_instance` with **no second argument** (no explicit type override).
+- **Does NOT activate**: when an explicit type is provided as the first positional argument to `register_*`. In that case, only the explicitly specified key is registered; `@provides` metadata on the target class is completely ignored.
+
+```python
+# @provides activates -- multi-registers under IFoo, IBar, and MultiImpl:
+@provides(IFoo, IBar)
+class MultiImpl: ...
+container.register_singleton(MultiImpl)  # no second argument
+
+# @provides does NOT activate -- only IFoo is registered:
+container.register_singleton(IFoo, MultiImpl)  # explicit type override
+# container.resolve(IBar)  → raises KeyError — @provides was ignored
+```
+
 **Important:** `@provides` and lifecycle decorators (`@singleton`, `@transient`, `@instanced`) are mutually exclusive on the same class. Use one approach or the other.
 
 ## Mock Library

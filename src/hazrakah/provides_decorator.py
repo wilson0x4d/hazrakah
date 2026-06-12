@@ -1,16 +1,23 @@
 # SPDX-FileCopyrightText: © 2026 Shaun Wilson
 # SPDX-License-Identifier: MIT
 
-"""Marker decorator for declaring which protocols a class implements.
+"""Passive marker decorator for declaring which protocols a class implements.
 
-The ``@provides`` decorator stores its provided types as the hidden attribute
-``__hazrakah_provides`` on the decorated class. Mutation methods
-(``register_singleton``, ``register_transient``, ``register_instance``)
-discover this attribute at call site and multi-register accordingly.
+The ``@provides`` decorator is a **passive** metadata marker -- it does nothing at
+decoration time except store its provided types as the hidden attribute
+``__hazrakah_provides`` on the decorated class. It has zero registration logic of
+its own.
 
-This decorator must NOT touch ``_DecorationInfoManager`` or set
-``__hazrakah_lifecycle`` -- those are the sole responsibility of lifecycle
-decorators (``@singleton``, ``@transient``, ``@instanced``).
+Activation depends entirely on how the container later registers the decorated class:
+
+- If you call ``register_singleton(MyClass)`` (no second argument), the container
+  discovers ``__hazrakah_provides`` and multi-registers *MyClass* under all provided
+  interfaces.
+- If you call ``register_singleton(IFoo, MyClass)`` (with an explicit type override),
+  @provides is **completely bypassed** -- only IFoo is registered.
+
+@provides must NOT be combined with lifecycle decorators (@singleton, @transient,
+@instanced) on the same class -- those are mutually exclusive by design.
 """
 
 from __future__ import annotations
@@ -34,16 +41,23 @@ def _raise_if_lifetime_decorated(unwrapped: Any) -> None:
 def provides(
     *types: Type[Any],
 ) -> Callable[[T], T]:
-    """Marker decorator: declares which protocols *cls* implements.
+    """Passive marker decorator: declares which protocols *cls* implements.
 
-    Stores metadata on the decorated class via ``__hazrakah_provides``;
-    zero registration logic at decoration time. The mutation methods discover
-    this attribute and register under each provided interface.
+    Stores metadata on the decorated class via ``__hazrakah_provides``; zero registration
+    logic at decoration time. Activation depends on how the container registers the class:
+
+    - No explicit type arg on register_* --> @provides triggers multi-registration.
+    - Explicit type arg on register_* --> @provides is ignored.
 
     Usage::
 
-        @provides(IFoo, IBar)   →  registers IFoo and IBar under the decorated class
-        @provides()              →  marker-only, no interfaces (backward compatible)
+        @provides(IFoo, IBar)           # stores metadata only
+        class MyClass: ...
+
+        c.register_singleton(MyClass)   # activates: registers IFoo, IBar, MyClass
+        c.register_transient(IBaz, ...)  # ignores @provides on other classes
+
+        @provides()                     # marker-only, no interfaces (backward compatible)
 
     :param types: Protocol types the decorated class implements. Variadic -- no tuple wrapping.
     """
