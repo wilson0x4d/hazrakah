@@ -24,8 +24,7 @@ from hazrakah.lifetime_decorators import _DecorationInfoManager
 
 def _reset_decorations():
     """Reset the global decoration info manager for test isolation."""
-    _DecorationInfoManager._DecorationInfoManager__store.clear()  # type: ignore[attr-defined]
-    _DecorationInfoManager._DecorationInfoManager__instance = None  # type: ignore[attr-defined]
+    _DecorationInfoManager._clear_store()
 
 
 @fact
@@ -578,3 +577,20 @@ def provides_singleton_shares_across_scopes_and_types():
     assert f1 is f2
     assert b1 is b2
     assert f1 is b1
+
+@fact
+def clear_store_resets_manager():
+    """regression: _clear_store() resets the manager for fresh registration."""
+    _reset_decorations()
+
+    class IFooClear:
+        pass
+
+    @singleton(types=IFooClear)  # noqa: F811
+    class TempClass:
+        pass
+
+    assert IFooClear in [e.interface for e in _DecorationInfoManager.instance().get_all()]
+
+    _reset_decorations()
+    assert not _DecorationInfoManager.instance().get_all()

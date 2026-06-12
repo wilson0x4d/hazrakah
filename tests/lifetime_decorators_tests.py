@@ -30,8 +30,32 @@ from punit import fact, teardown
 @teardown
 def _cleanup() -> None:
     """Reset the global decoration manager for isolation between tests."""
-    _DecorationInfoManager._DecorationInfoManager__store.clear()  # type: ignore[attr-defined]
-    _DecorationInfoManager._DecorationInfoManager__instance = None  # type: ignore[attr-defined]
+    _DecorationInfoManager._clear_store()
+
+
+@fact
+def clear_store_resets_manager():
+    """Bug 4 regression: _clear_store() resets state."""
+    class IFooZZ:
+        pass
+
+    @singleton(types=IFooZZ)  # noqa: F811
+    class TempClassZZ:
+        pass
+
+    assert len(_DecorationInfoManager.instance().get_all()) > 0
+
+    _DecorationInfoManager._clear_store()
+    assert _DecorationInfoManager.instance().get_all() == []
+
+
+@fact
+def clear_store_recreates_singleton():
+    """Bug 4 regression: after clear, new instance() call creates fresh manager."""
+    mgr1 = _DecorationInfoManager.instance()
+    _DecorationInfoManager._clear_store()
+    mgr2 = _DecorationInfoManager.instance()
+    assert mgr1 is not mgr2
 
 
 @fact

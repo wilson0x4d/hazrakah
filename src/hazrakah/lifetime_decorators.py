@@ -99,6 +99,12 @@ class _DecorationInfoManager:
         """Return a snapshot of all stored entries."""
         return list(_DecorationInfoManager.__store.values())
 
+    @classmethod
+    def _clear_store(cls) -> None:
+        """Clear all stored decoration info. For testing use only."""
+        cls.__instance = None
+        cls.__store.clear()
+
 
 _HAZRAKAH_LIFECYCLE_ATTR = '__hazrakah_lifecycle'
 

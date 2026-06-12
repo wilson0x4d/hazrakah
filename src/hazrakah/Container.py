@@ -7,7 +7,7 @@ from abc import ABC
 from enum import IntEnum
 import inspect
 import sys
-from types import NoneType, TracebackType
+from types import NoneType, TracebackType, UnionType
 from typing import (
     _SpecialForm,
     Any,
@@ -423,13 +423,14 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
 
     def resolve(self, t: Type[Any]) -> Any:
         is_optional = isinstance(t, str) and t.startswith('Optional')
-        if get_origin(t) is Union:
+        origin = get_origin(t)
+        if origin is Union or origin is UnionType:
             # an attempt to deunionize from `Optional[T]` to `T`` -- won't work for string annotations)
             # if we cannot instantiate the resulting type, because it is Optional (unioned with `None`)
             # we will allow the passing of None in leiu.
             org_args = get_args(t)
-            is_optional = org_args[-1] is None
-            t = [e for e in get_args(t) if e is not NoneType][0]
+            is_optional = org_args and org_args[-1] is None
+            t = [e for e in org_args if e is not NoneType][0]
         registration, scope = self.__get_registration(t)
         if registration is None:
             if self.__is_concrete(t):

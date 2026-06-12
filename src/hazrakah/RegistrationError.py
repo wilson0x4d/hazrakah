@@ -26,4 +26,4 @@ class RegistrationError(RuntimeError):
         """
         super().__init__(message)
         if cause is not None:
-            self.__cause__ = cause
+            super().__setattr__('__cause__', cause)
