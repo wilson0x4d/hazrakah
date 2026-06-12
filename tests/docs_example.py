@@ -8,7 +8,7 @@ example snippet.  The docs strip away assertions and shared type definitions so
 that each block is self-contained and readable without context.
 """
 
-from hazrakah import Container
+from hazrakah import Container, ResolutionError
 from hazrakah import singleton, transient, instanced, provides
 from hazrakah.mocks import Mock, is_gt, contains, neg, is_in, is_type
 from punit import fact
@@ -116,7 +116,7 @@ def test_hierarchical_scopes() -> None:
     assert isinstance(child.resolve(IBuzz), Buzz)
     try:
         parent.resolve(IBuzz)
-    except KeyError:
+    except ResolutionError:
         pass  # expected
 
 
@@ -216,7 +216,10 @@ def test_mock_framework() -> None:
     assert m.get_status() == "ok"
 
     # Side-effects as a fluent method call.
-    m.add.side_effect(lambda *args: sum(args))
+    def _sum(a: int, b: int) -> int:
+        return a + b
+
+    m.add.side_effect(_sum)
     assert m.add(2, 3) == 5
 
     # Call tracking and matchers — fluent side_effect on the child mock.

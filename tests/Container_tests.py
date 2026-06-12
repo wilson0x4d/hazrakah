@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from abc import ABC
-from hazrakah import Container, DependencyResolver, RegistrationError, provides
+from hazrakah import Container, DependencyResolver, RegistrationError, ResolutionError, provides
 from typing import Optional, Protocol, TypeVar, runtime_checkable
 from punit import fact
 from punit.assertions.exceptions import raises
@@ -150,24 +150,24 @@ def nonexistent_registration_when_concrete_must_succeed() -> None:
 
 @fact
 def nonexistent_registration_when_abstract_must_fail() -> None:
-    """Attempting to resolve an unregistered abstract raises ``KeyError``."""
+    """Attempting to resolve an unregistered abstract raises ``ResolutionError``."""
     container: Container = Container()
 
-    assert raises[KeyError](
+    assert raises[ResolutionError](
         lambda: container.resolve(IService),
         exact=True
-    ), 'Expected KeyError for an unknown registration of an abstract type.'
+    ), 'Expected ResolutionError for an unknown registration of an abstract type.'
 
 
 @fact
 def nonexistent_registration_when_protocol_must_fail() -> None:
-    """Attempting to resolve an unregistered abstract raises ``KeyError``."""
+    """Attempting to resolve an unregistered Protocol raises ``ResolutionError``."""
     container: Container = Container()
 
-    assert raises[KeyError](
+    assert raises[ResolutionError](
         lambda: container.resolve(ProtocolDroid),
         exact=True
-    ), 'Expected KeyError for an unknown registration of an abstract type.'
+    ), 'Expected ResolutionError for an unknown registration of a Protocol type.'
 
 
 @fact
@@ -197,7 +197,7 @@ def proto_subclass_no_init_must_resolve() -> None:
             ...
 
     class PSNI(PSNIMR):
-        def foo(self) -> None:
+        def foo(self) -> None:  # type: ignore[missing-override-decorator]
             pass
 
     container = Container()
@@ -216,7 +216,7 @@ def unregistered_proto_subclass_no_init_must_resolve() -> None:
             ...
 
     class UPSNI(UPSNIMR):
-        def foo(self) -> None:
+        def foo(self) -> None:  # type: ignore[missing-override-decorator]
             pass
 
     container = Container()
@@ -321,7 +321,7 @@ def test_hierarchical_singletons() -> None:
     # Parent should not resolve IBar
     try:
         parent.resolve(IBar)
-    except KeyError:
+    except ResolutionError:
         pass
     else:
         raise AssertionError('Parent container should not resolve child-registered singleton')
@@ -357,8 +357,110 @@ def unresolvable_optional_types_must_resolve_none() -> None:
     assert obj.cracked_wheat is None
 
 
+IFoo = IService | ServiceA  # union type alias: IService | ServiceA
+IBar = IService | ServiceB  # union type alias: IService | ServiceB
+
+
 @fact
-def is_registered_bvt() -> None:
+def non_optional_union_with_single_match_resolves() -> None:
+    """A union with exactly one registered member resolves to it."""
+    container: Container = Container()
+    container.register_transient(IService, ServiceA)
+    resolved = container.resolve(IService | ServiceA)  # type: ignore[arg-type]
+    assert isinstance(resolved, ServiceA), 'Should resolve to the single registered implementation'
+
+
+@fact
+def non_optional_union_with_no_match_raises_resolution_error() -> None:
+    """A union with no registrations and all abstract members raises ResolutionError."""
+    container: Container = Container()
+
+    class IFake1(ABC):
+        def do_something(self) -> int:
+            return 1
+
+    class IFake2(ABC):
+        def do_other(self) -> str:
+            return 'one'
+
+    assert raises[ResolutionError](
+        lambda: container.resolve(IFake1 | IFake2),  # type: ignore[arg-type]
+        exact=True
+    ), 'Expected ResolutionError for an unknown union of abstract types.'
+
+
+@fact
+def non_optional_union_with_multiple_different_targets_raises() -> None:
+    """A union with two different concrete targets raises ResolutionError."""
+    container: Container = Container()
+    container.register_transient(IService, ServiceA)
+    container.register_singleton(ServiceA, ServiceB)
+
+    assert raises[ResolutionError](
+        lambda: container.resolve(IService | ServiceA),  # type: ignore[arg-type]
+        exact=True
+    ), 'Expected ResolutionError for a union with multiple registered implementations.'
+
+
+@fact
+def non_optional_union_auto_resolves_concrete_member() -> None:
+    """If one member is concrete and unregistered, it auto-registers silently."""
+    container: Container = Container()
+    container.register_transient(IService, ServiceA)
+    resolved = container.resolve(IService | ServiceB)  # type: ignore[arg-type]
+    assert isinstance(resolved, ServiceB), 'Should auto-resolve the concrete unregistered member'
+
+
+@fact
+def union_with_pep695_alias_in_error_message_works_on_312_plus() -> None:
+    """Named type aliases set __name__, giving clean error messages on 3.12+."""
+    container: Container = Container()
+
+    class IFakeA(ABC):
+        def x(self) -> int:
+            return 2
+
+    class IFakeB(ABC):
+        def y(self) -> str:
+            return 'two'
+
+    assert raises[ResolutionError](
+        lambda: container.resolve(IFakeA | IFakeB),  # type: ignore[arg-type]
+        exact=True
+    )
+
+
+@fact
+def union_optional_types_still_work() -> None:
+    """Optional[T] unions should still work as before (regression guard)."""
+    container: Container = Container()
+
+    class WithOptional:
+        value: object | None
+
+        def __init__(self, opt: Optional[ServiceA] = None) -> None:
+            self.value = opt
+
+    obj = container.resolve(WithOptional)
+    assert obj is not None, 'resolve should succeed'
+
+
+@fact
+def union_both_unregistered_concrete_resolves_first() -> None:
+    """When both members are concrete and unregistered, resolves first one."""
+    container: Container = Container()
+
+    class ConcreteA:
+        def __init__(self) -> None:
+            self.tag = "A"
+
+    class ConcreteB:
+        def __init__(self) -> None:
+            self.tag = "B"
+
+    resolved = container.resolve(ConcreteA | ConcreteB)  # type: ignore[arg-type]
+    assert isinstance(resolved, ConcreteA), 'Should resolve the first concrete member'
+
     """`is_registered` should reflect registrations in the current container and its ancestors."""
     base: Container = Container()
     assert not base.is_registered(IService), 'Unregistered type should return False'
@@ -373,7 +475,7 @@ def is_registered_bvt() -> None:
     class DummyDroid(ProtocolDroid):
         """Simple concrete class implementing ProtocolDroid (which has no members)."""
 
-        def optimus(self) -> None:
+        def optimus(self) -> None:  # type: ignore[missing-override-decorator]
             pass
 
     child.register_instance(ProtocolDroid, DummyDroid())
@@ -551,10 +653,7 @@ def register_singleton_with_provides_same_interface_ignores_marker():
 
     # MyClass itself must NOT be auto-registered -- when target is provided,
     # @provides metadata is completely bypassed per design.
-    assert not c.is_registered(MyClass), (
-        'MyClass should NOT be auto-registered when an explicit type arg is provided; '
-        '@provides only activates with no explicit type argument.'
-    )
+    assert not c.is_registered(MyClass), 'MyClass should NOT be auto-registered when an explicit type arg is provided; @provides only activates with no explicit type argument.'
 
     r1 = c.resolve(IFoo)
     assert r1 is not None
@@ -642,16 +741,20 @@ def register_transient_when_instance_target():
 def chained_registrations_all_resolve() -> None:
     """A chain of registration methods correctly registers every type."""
     class IFoo(Protocol):
-        def foo(self) -> None: ...
+        def foo(self) -> None:
+            ...
 
     class Foo:
-        def foo(self) -> None: ...
+        def foo(self) -> None:
+            ...
 
     class IBar(Protocol):
-        def bar(self) -> str: ...
+        def bar(self) -> str:
+            ...
 
     class Bar:
-        def bar(self) -> str: return 'bar'
+        def bar(self) -> str:
+            return 'bar'
 
     container: Container = Container()
     iservice_instance: ServiceA = ServiceA()
@@ -687,10 +790,12 @@ def singleton_singleton_via_chain_memoizes() -> None:
 def mixed_chain_across_scopes_shares_singletons() -> None:
     """Singleton registrations in a parent chain are shared by child scopes."""
     class IFoo(Protocol):
-        def foo(self) -> None: ...
+        def foo(self) -> None:
+            ...
 
     class Foo:
-        def foo(self) -> None: ...
+        def foo(self) -> None:
+            ...
 
     parent: Container = Container()
     child: Container = parent.create_scope()

@@ -98,7 +98,11 @@ def callable_return_value_receives_mock_instance() -> None:
 def side_effect_callable_receives_call_args() -> None:
     """side_effect callables forward the call's args/kwargs."""
     child = Mock()
-    child.do_thing.side_effect(lambda *args, **kwargs: args[0] + 1)
+
+    def _add_one(first_arg: int, **_kwargs: object) -> int:
+        return first_arg + 1
+
+    child.do_thing.side_effect(_add_one)
     assert child.do_thing(41) == 42
 
 
@@ -159,7 +163,11 @@ def reset_clears_side_effect_iter() -> None:
 def fluent_chaining_on_same_mock_allows_multiple_side_effects() -> None:
     """Calling .side_effect after .returns overwrites the return value."""
     m = Mock()
-    result = m.do_thing.returns(99).side_effect(lambda *a, **k: 'overridden')
+
+    def _override(**_kwargs: object) -> str:
+        return 'overridden'
+
+    result = m.do_thing.returns(99).side_effect(_override)
     assert result is m.do_thing  # fluent API returns self
     assert m.do_thing() == 'overridden'
 

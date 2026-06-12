@@ -5,6 +5,7 @@ from .Container import Container
 from .DependencyRegistry import DependencyRegistry, Factory, Target
 from .DependencyResolver import DependencyResolver, ScopedDependencyResolver
 from .RegistrationError import RegistrationError
+from .ResolutionError import ResolutionError
 from . import mocks
 from .lifetime_decorators import Lifetime, singleton, transient, instanced
 from .provides_decorator import provides
@@ -19,6 +20,7 @@ __all__ = [
     'DependencyResolver',
     'Factory',
     'Lifetime',
+    'ResolutionError',
     'mocks',
     'RegistrationError',
     'ScopedDependencyResolver',

@@ -23,6 +23,7 @@ from typing import (
 )
 
 from .RegistrationError import RegistrationError
+from .ResolutionError import ResolutionError
 from .DependencyRegistry import DependencyRegistry, Target, Factory
 from .DependencyResolver import DependencyResolver, ScopedDependencyResolver
 
@@ -471,6 +472,80 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
                 self.__register_for_lifetime(t, Lifetime.TRANSIENT, t)
         return self
 
+    def _union_display_name(self, t: Type[Any]) -> str:
+        """Return a human-readable name for a union type alias, if available."""        
+        return getattr(t, '__name__', str(t))
+
+    def _resolve_union(self, t: Type[Any]) -> Any:
+        """Resolve a non-Optional union type alias -- find the single matching registration.
+
+        For each union member, checks for an explicit registration. If no registration
+        is found and the member is a concrete class, auto-registers it as transient
+        (silent happy path). After iterating all members:
+
+        - **One distinct target** → returns the resolved instance.
+        - **Multiple distinct targets** → raises :class:`ResolutionError` with details.
+          Registrations that map to the same concrete class are collapsed (e.g.
+          ``@provides(IFoo, IBar)`` on one implementation is not ambiguous).
+        - **Zero matches** → raises :class:`ResolutionError` describing the unresolved types.
+
+        Union type aliases containing ``None`` (i.e. ``Optional[T]``) are handled by
+        :meth:`resolve` before reaching this method, so this only processes non-Optional unions.
+        """
+        args = get_args(t)
+
+        matches: list[tuple[Type[Any], Container, Lifetime, Registration]] = []
+        unresolved: list[Type[Any]] = []  # members with no reg and not concrete
+
+        for member in args:
+            reg, scope = self.__get_registration(member)
+            if reg is not None and scope is not None:
+                matches.append((member, scope, reg.lifetime, reg))
+            elif self.__is_concrete(member):
+                # Auto-register + resolve; silent happy path
+                self.register_transient(member)  # type: ignore[arg-type]
+                return self.resolve(member)       # type: ignore[arg-type]
+            else:
+                unresolved.append(member)
+
+        # dedupe for target:
+        # - multiple union members MAY map to the same concrete concrete target.
+        # - only "distinct targets" constitute true ambiguity.
+        target_groups: dict[type, tuple[Type[Any], Container, Lifetime, Registration]] = {}
+        for member, scope, lifetime, reg in matches:
+            tgt = reg.target  # Registration.target property (line 57)
+            key = tgt if isinstance(tgt, type) else None
+            if key is not None and key in target_groups:
+                continue  # same concrete target already recorded
+            elif key is not None:
+                target_groups[key] = (member, scope, lifetime, reg)
+
+        if len(target_groups) == 0:
+            # All registrations have non-type targets (factories); treat as normal multi-match
+            distinct_matches = matches
+        else:
+            distinct_matches = list(target_groups.values())
+
+        if len(distinct_matches) == 1:
+            member, scope, _lifetime, _reg = distinct_matches[0]
+            return scope.resolve(member)         # type: ignore[arg-type]
+
+        if len(distinct_matches) > 1:
+            parts = []
+            for member, _, lifetime, _reg in distinct_matches:
+                name = getattr(member, '__name__', str(member))
+                parts.append(f"  - {name} ({lifetime.name})")
+            display_name = self._union_display_name(t)
+            raise ResolutionError(
+                f"No unique registration for {display_name}:\n" + "\n".join(parts),
+                matched=matches,
+            )
+
+        # zero matches
+        names = " | ".join(getattr(m, '__name__', str(m)) for m in unresolved)
+        display_name = self._union_display_name(t)
+        raise ResolutionError(f"No registration found for {display_name}: {names}")
+
     @overload
     def resolve(self, t: Type[T]) -> T:
         ...
@@ -480,6 +555,23 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         ...
 
     def resolve(self, t: Type[Any]) -> Any:
+        """Resolve a type to its registered implementation.
+
+        For **union types** (e.g. ``IFoo | IBar``):
+
+        * If the union is ``Optional[T]`` (contains ``NoneType``), unwraps to ``T``
+          and resolves normally; returns ``None`` if ``T`` is unresolvable.
+        * For **non-Optional unions** (e.g. ``IFoo | IBar``): finds the single
+          registered implementation among the union members. If multiple distinct
+          targets are registered, raises :class:`ResolutionError`. Unregistered concrete
+          classes are auto-registered as transient.
+
+        For non-union types, looks up the registration and dispatches by lifetime:
+
+        * ``INSTANCE`` – returns the stored instance.
+        * ``SINGLETON`` – creates or returns a shared instance per container scope.
+        * ``TRANSIENT`` – creates and returns a new instance each time.
+        """
         is_optional = isinstance(t, str) and t.startswith('Optional')
         origin = get_origin(t)
         if origin is Union or origin is UnionType:
@@ -487,8 +579,10 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
             # if we cannot instantiate the resulting type, because it is Optional (unioned with `None`)
             # we will allow the passing of None in leiu.
             org_args = get_args(t)
-            is_optional = org_args is not None and org_args[-1] is None
-            t = [e for e in org_args if e is not NoneType][0]
+            if NoneType in org_args:
+                t = [e for e in org_args if e is not NoneType][0]
+            else:
+                return self._resolve_union(t)
         registration, scope = self.__get_registration(t)
         if registration is None:
             if self.__is_concrete(t):
@@ -498,7 +592,7 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
             else:
                 if is_optional:
                     return None
-                raise KeyError(f'No registration for {t!r}')
+                raise ResolutionError(f'No registration found for {t!r}')
         match registration.lifetime:
             case Lifetime.INSTANCE:
                 return registration.instance
