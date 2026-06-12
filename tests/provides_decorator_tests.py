@@ -578,6 +578,27 @@ def provides_singleton_shares_across_scopes_and_types():
     assert b1 is b2
     assert f1 is b1
 
+
+@fact
+def provides_on_singleton_decorated_class_raises():
+    """regression: @provides on an already-@singleton class must raise."""
+    _reset_decorations()
+
+    class IFoo(Protocol):
+        def foo(self) -> None:
+            ...
+
+    @singleton(types=IFoo)  # noqa: F811
+    class AlreadySingleton:
+        pass
+
+    try:
+        provides(IFoo)(AlreadySingleton)  # type: ignore[arg-type]
+        assert False, 'Should have raised RegistrationError'
+    except RegistrationError as exc:
+        assert 'cannot apply' in str(exc).lower()
+
+
 @fact
 def clear_store_resets_manager():
     """regression: _clear_store() resets the manager for fresh registration."""
