@@ -135,6 +135,27 @@ def side_effect_iterable_returns_next_value_each_call() -> None:
 
 
 @fact
+def side_effect_plain_list_consumes_sequentially() -> None:
+    """Bug 5 regression: plain list [1,2,3] must yield 1, 2, 3 across calls."""
+    child = Mock()
+    child.do_thing.side_effect([1, 2, 3])  # not wrapped in iter()
+    assert child.do_thing() == 1
+    assert child.do_thing() == 2
+    assert child.do_thing() == 3
+
+
+@fact
+def reset_clears_side_effect_iter() -> None:
+    """reset() must clear the cached side_effect iterator."""
+    child = Mock()
+    child.do_thing.side_effect([99, 88])
+    assert child.do_thing() == 99
+    child.do_thing.reset()
+    # After reset, the iterator should be cleared so re-use starts from beginning
+    assert child.do_thing() == 99
+
+
+@fact
 def fluent_chaining_on_same_mock_allows_multiple_side_effects() -> None:
     """Calling .side_effect after .returns overwrites the return value."""
     m = Mock()

@@ -97,6 +97,7 @@ class Mock(ABC):
         '_Mock__call_history',
         '_Mock__has_return_value',
         '_Mock__has_side_effect',
+        '_Mock__side_effect_iter',
     )
 
     @classmethod
@@ -138,6 +139,7 @@ class Mock(ABC):
         object.__setattr__(self, '_Mock__call_history', [])
         object.__setattr__(self, '_Mock__has_return_value', False)
         object.__setattr__(self, '_Mock__has_side_effect', False)
+        object.__setattr__(self, '_Mock__side_effect_iter', None)
 
         if origin is not None:
             self.register_origin(origin)
@@ -330,10 +332,14 @@ class Mock(ABC):
         if isinstance(side_effect, type) and issubclass(side_effect, BaseException):
             raise side_effect()
 
-        # Iterable -- iterate through values
+        # Iterable -- iterate through values (cached iterator for sequential consumption)
         if isinstance(side_effect, Iterable) and not isinstance(side_effect, (str, bytes)):
-            iterator = iter(side_effect)
-            return next(iterator)  # Raises StopIteration when exhausted
+            cached_iter = object.__getattribute__(self, '_Mock__side_effect_iter')
+            if cached_iter is None:
+                new_iter = iter(side_effect)
+                object.__setattr__(self, '_Mock__side_effect_iter', new_iter)
+                return next(new_iter)
+            return next(cached_iter)  # Raises StopIteration when exhausted
 
         # Callable -- invoke with args/kwargs
         if callable(side_effect):
@@ -413,6 +419,7 @@ class Mock(ABC):
     def reset(self) -> None:
         """Clear call history; keep configuration intact."""
         object.__setattr__(self, '_Mock__call_history', [])
+        object.__setattr__(self, '_Mock__side_effect_iter', None)
 
     @property
     def call_count(self) -> int:

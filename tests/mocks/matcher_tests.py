@@ -39,6 +39,21 @@ def is_any_is_singleton() -> None:
 
 
 @fact
+def is_any_subclass_does_not_break_singleton() -> None:
+    """Bug 6 regression: subclassing Matcher must not break _IsAny singleton."""
+
+    class MyMatcher(Matcher):
+        def __eq__(self, other: object) -> bool:
+            return True
+
+    # is_any() should always return the same singleton regardless of subclass presence
+    a = is_any()
+    b = is_any()
+    c = is_any()
+    assert a is b is c
+
+
+@fact
 def contains_works_on_strings() -> None:
     m = contains('world')
     assert m.__eq__('hello world') is True
