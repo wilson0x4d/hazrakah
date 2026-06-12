@@ -2,23 +2,25 @@
 # SPDX-License-Identifier: MIT
 
 """
-Mocking framework for hazrakah.
-
 Provides :class:`Mock`, :class:`Matcher` argument matchers, a ``patch`` mechanism,
-and convenience functions for testing alongside dependency injection.
+and convenience functions.
 
 Usage::
 
     from hazrakah.mocks import Mock, mock, is_any, contains, patch
 
-    # Fluent stubbing
+    # Fluent syntax
     mock = (
         Mock()
         .do_stuff.
         returns(42)
+    )
 
     # Matcher-based verification
-    assert mock.was_called_with(is_any(), contains("foo"), is_in(1, 2, 3))
+    assert mock.was_called_with(
+        is_any(),
+        neg(contains("foo")),
+        is_in(1, 2, 3))
 
     # Module-level patching
     with patch("some.module.ClassName") as m:

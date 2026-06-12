@@ -1,7 +1,9 @@
 Reference
 =========
 
-.. automodule:: hazrakah
-   :members:
-   :undoc-members:
-   :show-inheritance:
+.. toctree::
+   :maxdepth: 1
+
+   SKILL
+   hazrakah
+   mocks

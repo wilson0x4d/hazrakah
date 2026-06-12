@@ -8,10 +8,13 @@ This README is only a high-level introduction to **hazrakah**. For more detailed
 
 ## Features
 
-- Supports Transient, Singleton and Instance registrations.
-- Registration targets can be a concrete type or a factory function.
-- Container is mutable by default, but can be frozen on-demand.
-- Hierarchical container scopes can be created, and scoped registrations are isolated to their respective scope.
+- Supports Singleton, Transient, and Instance lifetimes.
+- **Hierarchical scoping**; Isolate registrations and/or resolves. optionally use a context manager to deterministically tear down a scope and its resolved objects.
+- **Protocols, ABCs, and Concretes** can be registered against **Factory Functions and Concretes**.
+- **Lifetime Decorators**; (OPTIONAL) Types decorated with  `@singleton`, `@transient` or `@instanced` can be registered with a single call to `register_decorated()`, simplifying orchestration.
+- **Implicit Multi-Registration**; Types decorated with `@provides` bind to all provided types (unless explicit types are specified during registration.)
+- **Fluent chaining**; All registration methods return `self`, enabling method-chained container setup.
+- Built-in mocking framework: `Mock` with fluent configuration, async-aware interception, an extensible set of matchers (`is_any`, `is_gt`, `contains`, `neg`, ...), and module-level patching.
 
 ## Installation
 
@@ -24,89 +27,147 @@ You can install `hazrakah` from [PyPI](https://pypi.org/project/hazrakah/) throu
 
 ## Usage
 
-To use `hazrakah` simply create a `Container` instance and create one or more type registrations.  Afterward, the container can be used to resolve instances for the types you have registered:
+### Core lifetimes — Transient, Singleton, Instance
+
+`hazrakah` manages object lifecycles through three registration strategies:
 
 ```python
+from hazrakah import Container
 
-    from hazrakah import Container
+container = Container()
 
-    # assume you have three classes, Fizz, Buzz, and FizzBuzz,
-    # and also assume you have Protocols (interfaces) for each.
+# TRANSIENT — a new instance for every resolve.
+container.register_transient(IFoo, Foo)
+assert container.resolve(IFoo) is not container.resolve(IFoo)
 
-    container = Container()
-    scoped_container = container.create_scope()
+# SINGLETON — one shared instance across all resolves in scope.
+container.register_singleton(IFooBar, lambda c: c.resolve(FooBarImpl))
+assert container.resolve(IFooBar) is container.resolve(IFooBar)
 
-    # TRANSIENT == a new instance of `Foo` is created
-    # for every resolve of `IFoo`.
-    container.register_transient(IFizz, Fizz)
-    #
-    fizz1 = container.resolve(IFizz)
-    fizz2 = container.resolve(IFizz)
-    assert fizz1 is not fizz2, 'transient reg, every resolve is a new instance.'
+# INSTANCE — your exact object, returned everywhere (including child scopes).
+bar_obj = Bar()
+container.register_instance(IBar, bar_obj)
+assert container.resolve(IBar) is bar_obj
+```
 
-    # CHILD SCOPED registrations cannot be resolved
-    # from PARENT SCOPE.
-    scoped_container.register_transient(IBuzz, Buzz)
-    buzz1 = scoped_container.resolve(IBuzz)
-    assert buzz1 is not None, 'scopes should allow new registrations.'
-    try:
-        _ = container.resolve(IBuzz)
-    except KeyError:
-        pass
-    else:
-        raise AssertionError('parent scopes should not resolve child scope registrations.')
+### Hierarchical scopes
 
-    # INSTANCE == the provided instance is returned
-    # for every resolve of `FizzBuzz`.
-    container.register_instance(FizzBuzz, FizzBuzz())
-    #
-    fizzbuzz1 = container.resolve(FizzBuzz)
-    fizzbuzz2 = scoped_container.resolve(FizzBuzz)
-    assert fizzbuzz1 is fizzbuzz2, 'instance resolves always yield the provided instance'
+Scopes provide isolation: parent registrations flow down, but child-only registrations stay local.
 
-    # SINGLETON == a SINGLE instance will be created
-    # for ALL resolves of `IFizzBuzz`.
-    container.register_singleton(IFizzBuzz, lambda c: c.resolve(FizzBuzz))
-    fizzbuzz3 = container.resolve(IFizzBuzz)
-    fizzbuzz4 = container.resolve(IFizzBuzz)
-    assert fizzbuzz3 is fizzbuzz4, 'singleton resolves always yield a single instance.'
+```python
+parent = Container()
+child = parent.create_scope()
 
-    # for completeness, concrete types can self-regsiter without a target spec.
-    container.register_transient(Fizz)
-    fizz3 = container.resolve(Fizz)
-    assert fizz3 is not None
+parent.register_transient(IFoo, Foo)
+child.resolve(IFoo)          # resolves parent's registration
 
-    # and last, but not least, containers can be frozen,
-    # making them immutable (also freezing any scopes
-    # created after being frozen.)  once frozen, they
-    # cannot be unfrozen.
-    try:
-        container.freeze()
-        container.register_instance(Fizz, Fizz())
-    except RegistrationError:
-        pass
-    else:
-        assert False, 'Frozen containers should be immutable.'
+child.register_transient(IBar, Bar)
+child.resolve(IBar)          # works — registered in this scope
+# parent.resolve(IBar)      # raises KeyError — invisible to parent
+```
 
-    try:
-        scoped_container.register_instance(Fizz, Fizz())
-    except RegistrationError:
-        assert False, 'Scopes created BEFORE freezing are NOT frozen.'
+### Context manager cleanup
 
-    try:
-        scope2 = container.create_scope()
-        scope2.register_instance(Fizz, Fizz())
-    except RegistrationError:
-        pass
-    else:
-        assert False, 'Scopes created AFETR freezing are also frozen.'
+Resolve tracked resources and get deterministic teardown when the scope exits.
 
-    try:
-        setattr(container, '__frozen', False)
-    except AttributeError:
-        pass
-    else:
-        assert False, 'Attempts to modify Container directly will fail.'
+```python
+from hazrakah import Container
+
+class Closeable:
+    def __init__(self): self.closed = False
+    def close(self): self.closed = True
+
+with Container() as c:
+    c.register_transient(Closeable)
+    res = c.resolve(Closeable)
+
+assert res.closed               # teardown ran automatically on __exit__
+```
+
+### Fluent chaining
+
+All registration methods return `self`, enabling method-chained setup.
+
+```python
+container = (
+    Container()
+    .register_transient(IFoo, Foo)
+    .register_singleton(IBar, Bar)
+    .register_instance(IFizz, Fizz())
+)
+
+assert isinstance(container.resolve(IFoo), Foo)
+assert isinstance(container.resolve(IBar), Bar)
+```
+
+### Declarative lifetime decorators
+
+Mark intent at class-definition time with `@singleton`, `@transient`, or `@instanced`, then register everything in one call.
+
+```python
+from hazrakah import Container, singleton, transient, instanced
+
+@singleton(types=IFoo)
+class FooService: ...
+
+@transient(types=IBar)
+class BarService: ...
+
+@instanced  # binds to the class itself
+class BuzzService: ...
+
+c = Container()
+c.register_decorated()            # discovers all decorated classes
+
+assert c.resolve(IFoo) is c.resolve(IFoo)     # singleton
+assert c.resolve(IBar) is not c.resolve(IBar)  # transient
+```
+
+### Implicit multi-registration with `@provides`
+
+Declare which interfaces a class implements; registration binds to **all** of them simultaneously.
+
+```python
+from hazrakah import Container, provides
+
+@provides(IFoo, IBar)
+class MultiImpl:
+    def foo(self): ...
+    def bar(self): ...
+
+c = Container()
+c.register_transient(MultiImpl)    # registers under IFoo, IBar, and MultiImpl
+
+a = c.resolve(IFoo)
+b = c.resolve(IBar)
+assert a is b                       # same cached singleton instance
+```
+
+### Built-in mocking framework
+
+A lightweight `Mock` with fluent configuration, call tracking, argument matchers, and module-level `patch()`.
+
+```python
+from hazrakah.mocks import Mock, is_gt, contains, neg, is_in
+
+m = Mock()
+
+# Fluent stubbing.
+m.get_status.returns("ok")
+assert m.get_status() == "ok"
+
+# Side-effects on the child mock (fluent call, not direct assignment).
+m.compute.side_effect(lambda x: 10 if x > 5 else 20)
+assert m.compute(7) == 10
+assert m.compute(2) == 20
+
+# Call tracking.
+assert m.compute.was_called()
+assert m.compute.call_count == 2
+
+# Composed matchers.
+m.filter.returns(True)(neg(contains("blocked")))
+assert m.filter("allowed") is True
 ```
 
 
