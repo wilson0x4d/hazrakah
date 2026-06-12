@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from abc import ABC
-from hazrakah import Container, DependencyResolver
+from hazrakah import Container, DependencyResolver, RegistrationError, provides
 from typing import Optional, Protocol, TypeVar, runtime_checkable
 from punit import fact
 from punit.assertions.exceptions import raises
@@ -394,6 +394,67 @@ def register_instance_returns_self() -> None:
 
 
 @fact
+def register_instance_when_imlicit_type():
+    """implicit bindings (those without an explicit type arg) should bing to type(obj) + ``@provides`` types."""
+
+    class IFoo(Protocol):
+        def foo(self) -> None:
+            ...
+
+    class IBar(Protocol):
+        def bar(self) -> None:
+            ...
+
+    @provides(IFoo, IBar)
+    class MyClass:
+        def __init__(self):
+            self.value = 'x'
+
+    instance = MyClass()
+    c = Container()
+    c.register_instance(instance)
+
+    assert c.is_registered(IFoo)
+    assert c.is_registered(IBar)
+    assert c.is_registered(MyClass)
+
+    r1 = c.resolve(IFoo)  # type: ignore[arg-type]
+    r2 = c.resolve(IBar)  # type: ignore[arg-type]
+    r3 = c.resolve(MyClass)  # type: ignore[arg-type]
+    assert r1 is instance
+    assert r2 is instance
+    assert r3 is instance
+
+
+@fact
+def register_instance_when_explicit_type():
+    """binding to an explcit type must only register the for type specified."""
+
+    class IFoo(Protocol):
+        def foo(self) -> None:
+            ...
+
+    class IBar(Protocol):
+        def bar(self) -> None:
+            ...
+
+    @provides(IFoo, IBar)
+    class MyClass:
+        def __init__(self):
+            self.value = 'x'
+
+    instance = MyClass()
+    c = Container()
+    c.register_instance(IFoo, instance)
+
+    assert c.is_registered(IFoo)
+    assert not c.is_registered(IBar)
+
+    r1 = c.resolve(IFoo)  # type: ignore[arg-type]
+    assert r1 is instance
+
+
+@fact
 def register_singleton_returns_self() -> None:
     """register_singleton returns self, enabling chaining."""
     container: Container = Container()
@@ -402,11 +463,140 @@ def register_singleton_returns_self() -> None:
 
 
 @fact
+def register_singleton_when_implicit_type():
+    """implicit bindings (those without an explicit type arg) should bing to ``target`` type + ``@provides`` types."""
+
+    class IFoo(Protocol):
+        def foo(self) -> None:
+            ...
+
+    class IBar(Protocol):
+        def bar(self) -> None:
+            ...
+
+    @provides(IFoo, IBar)
+    class MyClass:
+        def __init__(self):
+            self.value = 'x'
+
+    c = Container()
+    c.register_singleton(MyClass)
+
+    assert c.is_registered(IFoo)
+    assert c.is_registered(IBar)
+    assert c.is_registered(MyClass)
+
+    r1 = c.resolve(IFoo)  # type: ignore[arg-type]
+    r2 = c.resolve(IBar)  # type: ignore[arg-type]
+    r3 = c.resolve(MyClass)  # type: ignore[arg-type]
+    assert r1 is not None
+    assert r2 is not None
+    assert r3 is not None
+
+
+@fact
+def register_singleton_when_exlicit_type():
+    """binding to an explcit type must only register the for type specified."""
+
+    class IFoo(Protocol):
+        def foo(self) -> None:
+            ...
+
+    class IBar(Protocol):
+        def bar(self) -> None:
+            ...
+
+    @provides(IBar)
+    class MyClass:
+        def __init__(self):
+            self.value = 'x'
+
+    c = Container()
+    c.register_singleton(IFoo, MyClass)
+
+    assert c.is_registered(IFoo), 'explicit registration for IFoo only.'
+    assert not c.is_registered(IBar), 'explicit registrations do not incorporate `@provides` types.'
+
+    r1 = c.resolve(IFoo)
+    assert r1 is not None
+    assert raises[KeyError](lambda: c.resolve(IBar))
+
+
+@fact
 def register_transient_returns_self() -> None:
     """register_transient returns self, enabling chaining."""
     container: Container = Container()
     result = container.register_transient(IService, ServiceA)
     assert result is container, 'register_transient should return self'
+
+
+@fact
+def register_transient_when_implicit_type():
+    """implicit bindings (those without an explicit type arg) should bing to ``target`` type + ``@provides`` types."""
+
+    class IFoo(Protocol):
+        def foo(self) -> None:
+            ...
+
+    class IBar(Protocol):
+        def bar(self) -> None:
+            ...
+
+    @provides(IFoo, IBar)
+    class MyClass:
+        def __init__(self):
+            self.value = 'x'
+
+    c = Container()
+    c.register_transient(MyClass)
+
+    assert c.is_registered(IFoo)
+    assert c.is_registered(IBar)
+    assert c.is_registered(MyClass)
+
+    r1 = c.resolve(IFoo)  # type: ignore[arg-type]
+    r2 = c.resolve(IBar)  # type: ignore[arg-type]
+    r3 = c.resolve(MyClass)  # type: ignore[arg-type]
+    assert r1 is not None
+    assert r2 is not None
+    assert r3 is not None
+
+
+@fact
+def register_transient_when_explicit_type():
+    """binding to an explcit type must only register the for type specified."""
+
+    class IFoo(Protocol):
+        def foo(self) -> None:
+            ...
+
+    class IBar(Protocol):
+        def bar(self) -> None:
+            ...
+
+    @provides(IBar)
+    class MyClass:
+        def __init__(self):
+            self.value = 'x'
+
+    c = Container()
+    c.register_transient(IFoo, MyClass)
+
+    assert c.is_registered(IFoo), 'explicit registration for IFoo only.'
+    assert not c.is_registered(IBar), 'explicit registrations do not incorporate `@provides` types.'
+
+    r1 = c.resolve(IFoo)
+    assert r1 is not None
+    assert raises[KeyError](lambda: c.resolve(IBar))
+
+
+@fact
+def register_transient_when_instance_target():
+    """Attempting to register an object instance via `register_transient` should fail."""
+    c = Container()
+    assert raises[RegistrationError](lambda: c.register_transient(IService, ServiceA()))  # type: ignore
+    assert not c.is_registered(IService), 'registration should have been blocked.'
+    assert raises[KeyError](lambda: c.resolve(IService)), 'instance should not be resolvable.'
 
 
 @fact
@@ -485,4 +675,3 @@ def register_decorated_returns_self() -> None:
     manager.get_all()  # warm up if needed
     result = Container().register_decorated()
     assert isinstance(result, Container), 'register_decorated should return self'
-

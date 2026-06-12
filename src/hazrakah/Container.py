@@ -376,6 +376,10 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
                 instance=target
             )
         else:
+            if not isinstance(target, type) and not callable(target):
+                raise RegistrationError(
+                    f'{lifetime} Registration for {t} cannot be bound to {target} (must be Type or Callable.)'
+                )
             self.__registrations[t] = Registration(
                 t=t,
                 lifetime=lifetime,
