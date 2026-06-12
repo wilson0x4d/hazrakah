@@ -355,3 +355,93 @@ def validate_true_does_not_raise_for_invalid_input() -> None:
     # Calling with 'wrong' type still works because validate is a no-op in current impl
     result = m.process('wrong')  # type: ignore[arg-type]
     assert result == 'ok'
+
+
+# -- **kwargs support tests --
+
+
+@fact
+def mock_kwargs_sets_return_values() -> None:
+    """Mock(migration='alpha', id=1) sets accessible attributes."""
+    m = Mock(migration='alpha', id=1)
+    assert m.migration == 'alpha'
+    assert m.id == 1
+
+
+@fact
+def mock_kwargs_multiple_reads_are_consistent() -> None:
+    """Configured values persist across multiple reads."""
+    m = Mock(a=1, b=2)
+    assert m.a == 1 and m.a == 1
+    assert m.b == 2 and m.b == 2
+
+
+@fact
+def mock_kwargs_none_value_works() -> None:
+    """None is a valid configured value, distinguishable from missing."""
+    m = Mock(nullable=None)
+    assert 'nullable' in m._internal_configured()
+    assert m.nullable is None
+
+
+@fact
+def mock_kwargs_bool_preserved() -> None:
+    """True and False are stored with identity, not collapsed to truthy."""
+    m = Mock(active=True, disabled=False)
+    assert m.active is True
+    assert m.disabled is False
+
+
+@fact
+def mock_kwargs_composes_with_origin() -> None:
+    """Kwargs coexist with origin-based isinstance conformance."""
+
+    m = Mock(origin=MyABC, x=42, y='hello')
+    assert isinstance(m, MyABC)  # type: ignore[unreachable]
+    assert m.x == 42  # type: ignore[union-attr]
+    assert m.y == 'hello'  # type: ignore[union-attr]
+
+
+@fact
+def mock_kwargs_composes_with_delegate() -> None:
+    """Kwargs set direct attributes that shadow delegation."""
+
+    class _Delegate:
+        label = 'from-delegate'
+
+    real = _Delegate()
+    m = Mock(delegate=real, label='override')
+    assert m.label == 'override'
+
+
+@fact
+def mock_kwargs_nested_mock_works() -> None:
+    """Nested Mock instances stored in configured are returned as-is."""
+    child = Mock(value='nested_value')
+    parent = Mock(user=child)
+    assert parent.user is child
+    assert parent.user.value == 'nested_value'
+
+
+@fact
+def mock_side_effect_kwarg_uses_calling_semantics() -> None:
+    """Mock(side_effect=fn) sets side_effect on the top-level mock."""
+    m = Mock(side_effect=lambda x: x * 2)
+    assert m(5) == 10
+
+
+@fact
+def mock_kwargs_empty_noop() -> None:
+    """Empty kwargs is a no-op — identical to bare Mock()."""
+    m = Mock(**{})
+    # Verify no attributes leaked from the empty dict expansion.
+    assert 'a' not in m._internal_configured()
+
+
+@fact
+def mock_kwargs_inner_mock_has_own_config() -> None:
+    """Nested Mock's own kwargs work correctly."""
+    inner = Mock(inner_value='deep')
+    outer = Mock(wrapped=inner)
+    assert outer.wrapped is inner
+    assert outer.wrapped.inner_value == 'deep'

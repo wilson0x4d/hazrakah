@@ -205,6 +205,11 @@ assert m.compute.call_count == 2
 # Composed matchers.
 m.filter.returns(True)(neg(contains("blocked")))
 assert m.filter("allowed") is True
+
+# Constructor kwargs for concise fixture creation
+row = Mock(migration='alpha', status='active')
+assert row.migration == 'alpha'
+assert row.status == 'active'
 ```
 
 

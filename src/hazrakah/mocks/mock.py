@@ -20,6 +20,11 @@ Usage::
     mock_userservice.get_user.returns("Guest")
 
     assert mock_userservice.was_called_with(is_gt(0))
+
+    # Constructor kwargs for fixture-style initialization
+    row = Mock(migration='alpha', id=1)
+    assert row.migration == 'alpha'
+    assert row.id == 1
 """
 
 from __future__ import annotations
@@ -103,6 +108,7 @@ class Mock:
         delegate: Any = None,
         name: str = '',
         validate: bool = False,
+        **kwargs: Any,
     ) -> None:
         """
         Create a new Mock instance.
@@ -111,6 +117,9 @@ class Mock:
         :param delegate: A real object whose methods are forwarded when not configured.
         :param name: Debug identifier for the mock.
         :param validate: If True, validate call arguments against inspectable signatures.
+        :param kwargs: Arbitrary keyword arguments set as initial attribute values.
+            Each key becomes an accessible attribute that returns the given value.
+            The special key ``side_effect`` is applied to this mock's calling behavior.
         """
         # object.__setattr__ to bypass __setattr__ interceptor during init
         object.__setattr__(self, '_Mock__origin', None)
@@ -132,6 +141,19 @@ class Mock:
         if delegate is not None:
             object.__setattr__(self, '_Mock__delegate', delegate)
 
+        # addt'l kwargs get initialized as attrs
+        for key, value in kwargs.items():
+            if key.startswith('_'):
+                continue  # avoid state corruption state
+            if key == 'side_effect':
+                # mutate call semantics (applies to 'this' mock)
+                configured = self._internal_configured()
+                configured['__side_effect__'] = value
+                object.__setattr__(self, '_Mock__has_side_effect', True)
+                object.__setattr__(self, '_Mock__has_return_value', False)
+            else:
+                self._internal_configured()[key] = value
+
     def _internal_children(self) -> dict[str, Mock]:
         """Internal helper to access the children dict safely."""
         return object.__getattribute__(self, '_Mock__children')
@@ -148,11 +170,9 @@ class Mock:
         """Pre-create child Mock stubs for all public members of the origin."""
         members: set[str] = set()
 
-        # Check for runtime_checkable Protocol via __protocol_attrs__ or __annotations__
         if hasattr(origin, '__protocol_attrs__'):
             members.update(origin.__protocol_attrs__)
         elif hasattr(origin, '__annotations__'):
-            # Infer callable members from annotations and dir()
             all_attrs = set(dir(origin))
             for attr_name in all_attrs:
                 if attr_name.startswith('_'):
@@ -162,14 +182,11 @@ class Mock:
                     if callable(attr):
                         members.add(attr_name)
 
-        # For concrete classes with no protocol/ABC markers, use all public dir() members
         if not members:
             for attr_name in dir(origin):
                 if not attr_name.startswith('_'):
                     members.add(attr_name)
 
-        # Also scan annotations and class-level attributes from the origin's __dict__
-        # to catch properties that aren't callable but are accessible.
         ann = getattr(origin, '__annotations__', {})
         for attr_name in ann:
             if not attr_name.startswith('_'):

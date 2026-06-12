@@ -16,6 +16,11 @@ Usage::
         returns(42)
     )
 
+    # Constructor kwargs for fixture-style initialization
+    user = Mock(first_name='Alice', email='alice@example.com')
+    assert user.first_name == 'Alice'
+    assert user.email == 'alice@example.com'
+
     # Matcher-based verification
     assert mock.was_called_with(
         is_any(),

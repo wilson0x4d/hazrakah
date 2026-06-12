@@ -311,6 +311,18 @@ assert not parent.was_called()
 # parent unaffected after exit — auto-reset
 ```
 
+### Constructor kwargs for fixtures
+
+Use ``**kwargs`` to set initial attribute values, providing a concise alternative to fluent stubbing for fixture-like objects:
+
+```python
+user = Mock(first_name='Alice', email='alice@example.com')
+assert user.first_name == 'Alice'
+assert user.email == 'alice@example.com'
+```
+
+This pattern is especially useful for inline test fixtures where fluent chaining would be verbose. The ``side_effect`` special key still configures calling behavior on the mock itself rather than being stored as an attribute.
+
 ## Matchers
 
 Matchers enable flexible call verification via natural `__eq__` dispatch in `was_called_with()`:

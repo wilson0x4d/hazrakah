@@ -196,3 +196,22 @@ def patch_instance_is_mock() -> None:
             assert hasattr(m, 'was_called')
     finally:
         _cleanup_fake_module()
+
+
+@fact
+def patch_kwargs_forwarded_to_mock() -> None:
+    """patch passes **kwargs through to Mock.__init__."""
+    _setup_fake_module()
+    try:
+        setattr(  # type: ignore[attr-defined]
+            sys.modules['hazrakah._test_patch_module'],
+            '_patched_attr',
+            'original',
+        )
+
+        with patch('hazrakah._test_patch_module._patched_attr', migration='alpha', id=42) as m:
+            assert isinstance(m, Mock)
+            assert m.migration == 'alpha'
+            assert m.id == 42
+    finally:
+        _cleanup_fake_module()

@@ -211,3 +211,11 @@ A lightweight ``Mock`` with fluent configuration, call tracking, argument matche
     # Composed matchers.
     m.filter.returns(True)(neg(contains("blocked")))
     assert m.filter("allowed") is True
+
+Constructor kwargs for fixtures work alongside fluent stubbing as a concise alternative:
+
+.. code-block:: python
+
+    row = Mock(migration='alpha', id=1)
+    assert row.migration == 'alpha'
+    assert row.id == 1
