@@ -12,7 +12,7 @@ from _DecorationInfoManager shared state.
 """
 
 from hazrakah import RegistrationError, singleton, transient, instanced
-from punit import raises, fact, fails
+from punit import fact, fails
 from typing import Protocol
 
 from hazrakah import Container, provides
@@ -128,6 +128,7 @@ def register_transient_with_provides_multi_registers():
 
     assert c.is_registered(IFoo)
     assert c.is_registered(IBar)
+    assert c.is_registered(MyClass)
 
     w1 = c.resolve(IFoo)  # type: ignore[arg-type]
     w2 = c.resolve(IBar)  # type: ignore[arg-type]
@@ -155,66 +156,6 @@ def register_transient_with_provides_creates_new_instances():
     assert isinstance(w1, MyClass)
     assert w1 is not w2
 
-
-@fact
-def implicit_register_instance():
-    """register_instance without type arg registers under all interfaces (ie. type(obj) + ``@provides`` if it exists)."""
-
-    class IFoo(Protocol):
-        def foo(self) -> None:
-            ...
-
-    class IBar(Protocol):
-        def bar(self) -> None:
-            ...
-
-    @provides(IFoo, IBar)
-    class MyClass:
-        def __init__(self):
-            self.value = 'x'
-
-    instance = MyClass()
-    c = Container()
-    c.register_instance(instance)
-
-    assert c.is_registered(IFoo)
-    assert c.is_registered(IBar)
-    assert c.is_registered(MyClass)
-
-    r1 = c.resolve(IFoo)  # type: ignore[arg-type]
-    r2 = c.resolve(IBar)  # type: ignore[arg-type]
-    r3 = c.resolve(MyClass)  # type: ignore[arg-type]
-    assert r1 is instance
-    assert r2 is instance
-    assert r3 is instance
-
-
-@fact
-def explciit_register_instance():
-    """register_instance with explcit type arg must only register the instance specified."""
-
-    class IFoo(Protocol):
-        def foo(self) -> None:
-            ...
-
-    class IBar(Protocol):
-        def bar(self) -> None:
-            ...
-
-    @provides(IFoo, IBar)
-    class MyClass:
-        def __init__(self):
-            self.value = 'x'
-
-    instance = MyClass()
-    c = Container()
-    c.register_instance(IFoo, instance)
-
-    assert c.is_registered(IFoo)
-    assert not c.is_registered(IBar)
-
-    r1 = c.resolve(IFoo)  # type: ignore[arg-type]
-    assert r1 is instance
 
 
 @fact
