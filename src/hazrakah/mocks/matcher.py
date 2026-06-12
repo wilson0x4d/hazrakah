@@ -53,9 +53,9 @@ class _IsAny(Matcher):
     _instance: '_IsAny | None' = None
 
     def __new__(cls) -> '_IsAny':
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
+        if _IsAny._instance is None:
+            _IsAny._instance = super().__new__(cls)
+        return _IsAny._instance
 
     def __eq__(self, other: Any) -> bool:
         return True
