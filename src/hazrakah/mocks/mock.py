@@ -148,6 +148,57 @@ class Mock:
     Child mocks (returned by attribute access) are cached -- ``mock.foo is mock.foo``.
     """
 
+    class _Untouchables:
+        """Per-instance holder for Mock's internal framework state."""
+
+        __slots__ = (
+            'origin',
+            'delegate',
+            'name',
+            'path',
+            'parent',
+            'children',
+            'configured',
+            'call_history',
+            'all_calls',
+            'child_calls',
+            'has_return_value',
+            'has_side_effect',
+            'side_effect_iter',
+            'delegate_method',
+        )
+
+        origin: Optional[type]
+        delegate: Any
+        name: str
+        path: str
+        parent: Optional["Mock"]
+        children: dict[str, "Mock"]
+        configured: dict[str, Any]
+        call_history: list[CallDetail]
+        all_calls: list[CallEntry]
+        child_calls: list[CallEntry]
+        has_return_value: bool
+        has_side_effect: bool
+        side_effect_iter: Any
+        delegate_method: Any
+
+        def __init__(self) -> None:
+            self.origin = None
+            self.delegate = None
+            self.name = "Mock"
+            self.path = "Mock"
+            self.parent = None
+            self.children = {}
+            self.configured = {}
+            self.call_history = []
+            self.all_calls = []
+            self.child_calls = []
+            self.has_return_value = False
+            self.has_side_effect = False
+            self.side_effect_iter = None
+            self.delegate_method = None
+
     @classmethod
     def register_origin(cls, origin: type) -> None:
         """Register *origin* so that Mock instances pass ``isinstance(_, origin)``.
@@ -180,29 +231,19 @@ class Mock:
             Each key becomes an accessible attribute that returns the given value.
             The special key ``side_effect`` is applied to this mock's calling behavior.
         """
-        # object.__setattr__ to bypass __setattr__ interceptor during init
-        object.__setattr__(self, '_Mock__origin', None)
-        object.__setattr__(self, '_Mock__delegate', None)
-        object.__setattr__(self, '_Mock__name', name)
-        object.__setattr__(self, '_Mock__path', name)
-        object.__setattr__(self, '_Mock__parent', None)
-        object.__setattr__(self, '_Mock__children', {})
-        object.__setattr__(self, '_Mock__configured', {})
-        object.__setattr__(self, '_Mock__call_history', [])
-        object.__setattr__(self, '_Mock__all_calls', [])
-        object.__setattr__(self, '_Mock__child_calls', [])
-        object.__setattr__(self, '_Mock__has_return_value', False)
-        object.__setattr__(self, '_Mock__has_side_effect', False)
-        object.__setattr__(self, '_Mock__side_effect_iter', None)
+        # Allocate internal state in a dedicated container (keeps it insulated
+        # from user-set kwargs which become accessible Mock attributes).
+        self._u = Mock._Untouchables()
+        self._u.name = name
+        self._u.path = name
 
         if origin is not None:
             self.register_origin(origin)
-            # safe to call __setattr__ at  this point
-            object.__setattr__(self, '_Mock__origin', origin)
+            self._u.origin = origin
             self._populate_members(origin)
 
         if delegate is not None:
-            object.__setattr__(self, '_Mock__delegate', delegate)
+            self._u.delegate = delegate
 
         # addt'l kwargs get initialized as attrs
         for key, value in kwargs.items():
@@ -210,28 +251,11 @@ class Mock:
                 continue  # avoid state corruption state
             if key == 'side_effect':
                 # mutate call semantics (applies to 'this' mock)
-                configured = self._internal_configured()
-                configured['__side_effect__'] = value
-                object.__setattr__(self, '_Mock__has_side_effect', True)
-                object.__setattr__(self, '_Mock__has_return_value', False)
+                self._u.configured['__side_effect__'] = value
+                self._u.has_side_effect = True
+                self._u.has_return_value = False
             else:
-                self._internal_configured()[key] = value
-
-    def _internal_children(self) -> dict[str, Mock]:
-        """Internal helper to access the children dict safely."""
-        return object.__getattribute__(self, '_Mock__children')
-
-    def _internal_configured(self) -> dict[str, Any]:
-        """Internal helper to access the configured dict safely."""
-        return object.__getattribute__(self, '_Mock__configured')
-
-    def _internal_call_history(self) -> list[CallDetail]:
-        """Internal helper to access the call history list safely."""
-        return object.__getattribute__(self, '_Mock__call_history')
-
-    def _internal_all_calls(self) -> list[CallEntry]:
-        """Internal helper to access aggregated call entries safely."""
-        return object.__getattribute__(self, '_Mock__all_calls')
+                self._u.configured[key] = value
 
     def _populate_members(self, origin: type) -> None:
         """Pre-create child Mock stubs for all public members of the origin."""
@@ -265,62 +289,70 @@ class Mock:
                 members.add(attr_name)
 
         for name in members:
-            child_name = f'{getattr(self, "_Mock__name")}.{name}' if getattr(self, "_Mock__name") else name
+            child_name = f'{self._u.name}.{name}' if self._u.name else name
             child = Mock(name=child_name)
-            object.__setattr__(child, '_Mock__parent', self)
+            child._u.parent = self
             self._set_child_configured(name, child)
 
     def _set_child_configured(self, name: str, child: Mock) -> None:
         """Set a pre-configured child for a given attribute name."""
-        configured = self._internal_configured()
-        configured[name] = child
+        self._u.configured[name] = child
 
     @property
     def origin(self) -> Optional[type]:
         """The origin type this mock stands in for."""
-        return object.__getattribute__(self, '_Mock__origin')
+        return self._u.origin
 
     def __getattr__(self, name: str) -> Mock:
         """Return a cached child Mock or pre-populated stub for the given attribute."""
-        # Check if we have a pre-configured stub (from origin members)
-        configured = self._internal_configured()
-        if name in configured:
-            return configured[name]
+        # Guard against infinite recursion during early init (before _u is set).
+        try:
+            u = object.__getattribute__(self, '_u')
+        except AttributeError:
+            raise AttributeError(
+                f"'{type(self).__name__}' object has no attribute '{name}'"
+            ) from None
+        if name in u.configured:
+            return self._u.configured[name]
 
         # Delegate-aware lookup: if a delegate is set and has this attribute,
         # create a Mock wrapper that forwards calls to it.
-        delegate = object.__getattribute__(self, '_Mock__delegate')
+        delegate = self._u.delegate
         if delegate is not None and hasattr(delegate, name):
             child = Mock()
-            child._Mock__name = f'{getattr(self, "_Mock__name")}.{name}' if getattr(self, '_Mock__name') else name
-            child._Mock__path = f'{getattr(self, "_Mock__path")}.{name}' if getattr(self, '_Mock__path') else name
-            object.__setattr__(child, '_Mock__parent', self)
+            child._u.name = f'{self._u.name}.{name}' if self._u.name else name
+            child._u.path = f'{self._u.path}.{name}' if self._u.path else name
+            child._u.parent = self
             # Store the real method reference for forwarding in __call__
             real_attr = getattr(delegate, name)
-            child._Mock__delegate_method = real_attr  # type: ignore[attr-defined]
-            children = self._internal_children()
-            children[name] = child
+            child._u.delegate_method = real_attr  # type: ignore[attr-defined]
+            self._u.children[name] = child
             return child
 
         # Return cached child or create new one
-        children = self._internal_children()
-        if name not in children:
+        if name not in self._u.children:
             child = Mock()
-            child._Mock__name = f'{getattr(self, "_Mock__name")}.{name}' if getattr(self, '_Mock__name') else name
-            child._Mock__path = f'{getattr(self, "_Mock__path")}.{name}' if getattr(self, '_Mock__path') else name
-            object.__setattr__(child, '_Mock__parent', self)
-            children[name] = child
-        return children[name]
+            child._u.name = f'{self._u.name}.{name}' if self._u.name else name
+            child._u.path = f'{self._u.path}.{name}' if self._u.path else name
+            child._u.parent = self
+            self._u.children[name] = child
+        return self._u.children[name]
 
     def __setattr__(self, name: str, value: Any) -> None:  # type: ignore[override]
         """Accept arbitrary attributes; raise MockError for configured stub clobbering."""
-        # Check if this name corresponds to a configured mock stub (clobbering attempt)
-        configured = self._internal_configured()
-        if name in configured:
-            raise MockError(
-                f'Cannot overwrite mock configuration for "{name}". '
-                f'Use the fluent API (returns(), side_effect()) to configure.'
-            )
+        # Check if this name corresponds to a configured mock stub (clobbering attempt).
+        # _u may not exist yet during early init — skip the check in that case.
+        try:
+            u = object.__getattribute__(self, '_u')
+            configured = u.configured
+        except AttributeError:
+            configured = None
+        else:
+            if name in configured:
+                raise MockError(
+                    f'Cannot overwrite mock configuration for "{name}". '
+                    f'Use the fluent API (returns(), side_effect()) to configure.'
+                )
         # compat: to ease test porting, we want `side_effect` assignment to delegate to the fluent api
         if name == 'side_effect':
             self.side_effect(value)
@@ -340,33 +372,30 @@ class Mock:
         result: Any = self
         error: BaseException | None = None
 
-        has_side_effect = object.__getattribute__(self, '_Mock__has_side_effect')
-        has_return_value = object.__getattribute__(self, '_Mock__has_return_value')
+        has_side_effect = self._u.has_side_effect
+        has_return_value = self._u.has_return_value
 
         try:
             if has_side_effect:
-                side_effect = self._internal_configured().get('__side_effect__')
+                side_effect = self._u.configured.get('__side_effect__')
                 result = self._evaluate_side_effect(side_effect, args, kwargs)
             elif has_return_value:
-                rv = self._internal_configured().get('__return_value__')
+                rv = self._u.configured.get('__return_value__')
                 if callable(rv):
                     result = rv(self)  # type: ignore[arg-type]
                 else:
                     result = rv
             else:
                 # Forward to delegate method (set by __getattr__ for attribute access)
-                try:
-                    delegate_method = object.__getattribute__(self, '_Mock__delegate_method')
-                except AttributeError:
-                    delegate_method = None
+                delegate_method = getattr(self._u, 'delegate_method', None)
                 if delegate_method is not None and callable(delegate_method):
                     result = delegate_method(*args, **kwargs)
                 else:
                     # Forward to top-level delegate (only works when mock has a name
                     # that matches a method on the delegate)
-                    delegate = object.__getattribute__(self, '_Mock__delegate')
+                    delegate = self._u.delegate
                     if delegate is not None:
-                        name = getattr(self, '_Mock__name')
+                        name = self._u.name
                         attr_name = (
                             name.rsplit('.', 1)[-1] if name else '__call__'
                         )
@@ -387,7 +416,7 @@ class Mock:
             result=result if error is None else None,
             error=error,
         )
-        self._internal_call_history().append(record)
+        self._u.call_history.append(record)
         self._propagate_call(record)
         return result
 
@@ -406,10 +435,10 @@ class Mock:
 
         # Iterable -- iterate through values (cached iterator for sequential consumption)
         if isinstance(side_effect, Iterable) and not isinstance(side_effect, (str, bytes)):
-            cached_iter = object.__getattribute__(self, '_Mock__side_effect_iter')
+            cached_iter = self._u.side_effect_iter
             if cached_iter is None:
                 new_iter = iter(side_effect)
-                setattr(self, '_Mock__side_effect_iter', new_iter)
+                self._u.side_effect_iter = new_iter
                 return next(new_iter)
             return next(cached_iter)  # Raises StopIteration when exhausted
 
@@ -421,7 +450,7 @@ class Mock:
 
     def _propagate_call(self, call_detail: CallDetail) -> None:
         """Append this call entry to ``_all_calls`` and ``_child_calls`` on self and ancestors."""
-        path = object.__getattribute__(self, '_Mock__path')  # type: ignore[arg-type]
+        path = self._u.path  # type: ignore[union-attr]
         entry = CallEntry(
             path=path,
             args=call_detail.parameters[0],
@@ -429,16 +458,14 @@ class Mock:
         )
 
         # Self always gets the entry in _all_calls (direct call to this mock)
-        object.__getattribute__(self, '_Mock__all_calls').append(entry)
+        self._u.all_calls.append(entry)
 
         # Walk up parent chain for ancestor aggregation
-        obj = object.__getattribute__(self, '_Mock__parent')
+        obj = self._u.parent
         while obj is not None:
-            ancestors_all = object.__getattribute__(obj, '_Mock__all_calls')
-            ancestors_child = object.__getattribute__(obj, '_Mock__child_calls')
-            ancestors_all.append(entry)
-            ancestors_child.append(entry)  # reached via attribute access on this ancestor
-            obj = object.__getattribute__(obj, '_Mock__parent')
+            obj._u.all_calls.append(entry)
+            obj._u.child_calls.append(entry)  # reached via attribute access on this ancestor
+            obj = obj._u.parent
 
     def __eq__(self, other: Any) -> bool:  # type: ignore[override]
         """Identity-only comparison (two Mocks are never equal unless same object)."""
@@ -450,15 +477,14 @@ class Mock:
 
     def __enter__(self) -> Mock:
         """Clone self into a fresh child for independent configuration."""
-        name_mangled = getattr(self, '_Mock__name')
+        name_mangled = self._u.name
         clone_name = f'{name_mangled} (child)' if name_mangled else ''
-        origin_val = object.__getattribute__(self, '_Mock__origin')
-        delegate_val = object.__getattribute__(self, '_Mock__delegate')
-        # Use plain Mock to avoid subclass issues; set via normal assignment.
-        clone = Mock()
-        clone._Mock__name = clone_name
-        clone._Mock__origin = origin_val
-        clone._Mock__delegate = delegate_val
+        origin_val = self._u.origin
+        delegate_val = self._u.delegate
+        # __init__ creates _u with defaults; overwrite what we need.
+        clone = Mock(name=clone_name)
+        clone._u.origin = origin_val
+        clone._u.delegate = delegate_val
         return clone
 
     def __exit__(
@@ -470,29 +496,36 @@ class Mock:
         """Reset call history on exit."""
         self.reset()
 
-    def returns(self, value_or_callable: Any) -> Mock:
-        """Set fixed return value or callable. Callable receives the mocked instance as its sole argument. Clears side_effect."""
-        configured = self._internal_configured()
-        configured['__return_value__'] = value_or_callable
-        object.__setattr__(self, '_Mock__has_return_value', True)
-        object.__setattr__(self, '_Mock__has_side_effect', False)
+    def __side_effect(
+        self,
+        eff: Union[Callable[..., Any], BaseException, type, Iterable[Any]] | None,
+    ) -> Mock:
+        """Set side effect (callable/exception/iterable). Clears `returns`."""
+        self._u.configured['__side_effect__'] = eff
+        self._u.has_side_effect = True
+        self._u.has_return_value = False
         return self
 
-    def side_effect(
-        self,
-        eff: Union[Callable[..., Any], BaseException, type, Iterable[Any]],
-    ) -> Mock:
-        """Set side effect (callable/exception/iterable). Clears returns."""
-        configured = self._internal_configured()
-        configured['__side_effect__'] = eff
-        object.__setattr__(self, '_Mock__has_side_effect', True)
-        object.__setattr__(self, '_Mock__has_return_value', False)
+    @property
+    def side_effect(self) -> Callable[[Union[Callable[..., Any], BaseException, type, Iterable[Any]] | None], Mock]:
+        """Set side effect (callable/exception/iterable). Clears `returns`."""
+        return self.__side_effect
+
+    @side_effect.setter
+    def side_effect(self, value: Union[Callable[..., Any], BaseException, type, Iterable[Any]] | None) -> None:
+        self.__side_effect(value)
+
+    def returns(self, value_or_callable: Any) -> Mock:
+        """Set fixed return value or callable. Callable receives the mocked instance as its sole argument. Clears side_effect."""
+        self._u.configured['__return_value__'] = value_or_callable
+        self._u.has_return_value = True
+        self._u.has_side_effect = False
         return self
 
     @property
     def called(self) -> bool:
         """Return ``True`` if this mock has been called at least once."""
-        return len(self._internal_all_calls()) > 0  # type: ignore[arg-type]
+        return len(self._u.all_calls) > 0  # type: ignore[arg-type]
 
     def was_called(self) -> bool:
         warnings.warn(
@@ -511,7 +544,7 @@ class Mock:
 
         Uses ``==`` dispatch for each argument, enabling matcher support.
         """
-        history = self._internal_call_history()
+        history = self._u.call_history
         for record in history:
             if self._matches_args(record.parameters[0], args) and \
                self._matches_kwargs(record.parameters[1], kwargs):
@@ -544,30 +577,29 @@ class Mock:
         :param preserve_sideeffects: If ``True`` (default), keep fluent-configuration
             values such as ``__return_value__`` and ``__side_effect__`` intact.  If
             ``False``, wipe all ``__*-prefixed* configuration keys from
-            ``_Mock__configured`` and reset the has_* flags, but leave structural
+            ``_u.configured`` and reset the has_* flags, but leave structural
             stubs (origin-prepopulated members) untouched.
         """
         for m in self._traverse():
-            object.__setattr__(m, '_Mock__all_calls', [])
-            object.__setattr__(m, '_Mock__child_calls', [])
+            m._u.all_calls = []
+            m._u.child_calls = []
 
-        object.__setattr__(self, '_Mock__call_history', [])
-        object.__setattr__(self, '_Mock__side_effect_iter', None)
+        self._u.call_history = []
+        self._u.side_effect_iter = None
 
         if not preserve_sideeffects:
-            object.__setattr__(self, '_Mock__has_return_value', False)
-            object.__setattr__(self, '_Mock__has_side_effect', False)
-            configured = self._internal_configured()
-            keys_to_delete = [k for k in configured if k.startswith('__')]
+            self._u.has_return_value = False
+            self._u.has_side_effect = False
+            keys_to_delete: list[str] = [k for k in self._u.configured if k.startswith('__')]
             for key in keys_to_delete:
-                del configured[key]
+                del self._u.configured[key]
 
         if not preserve_stubs:
 
             def _clear_children_recursively(m: Mock) -> None:
-                for child in m._internal_children().values():
+                for child in m._u.children.values():
                     child.reset(preserve_stubs=True, preserve_sideeffects=True)
-                object.__setattr__(m, '_Mock__children', {})
+                m._u.children = {}
 
             _clear_children_recursively(self)
 
@@ -587,28 +619,28 @@ class Mock:
     def _traverse(self):  # type: ignore[no-untyped-def]
         """Yield self and all descendants."""
         yield self
-        for child in self._internal_children().values():
+        for child in self._u.children.values():
             yield from child._traverse()
 
     @property
     def mock_calls(self) -> CallEntryList:
         """All calls to this mock and its children, including dotted paths."""
-        return CallEntryList(self._internal_all_calls())
+        return CallEntryList(self._u.all_calls)
 
     @property
     def child_calls(self) -> CallEntryList:
         """Calls reached through child attribute access only (not self-invocations)."""
-        return CallEntryList(object.__getattribute__(self, '_Mock__child_calls'))
+        return CallEntryList(self._u.child_calls)
 
     @property
     def call_count(self) -> int:
         """Number of calls recorded for this mock."""
-        return len(self._internal_call_history())
+        return len(self._u.call_history)
 
     @property
     def calls(self) -> Sequence[CallDetail]:
         """Immutable sequence of all recorded calls."""
-        history = self._internal_call_history()
+        history = self._u.call_history
         return tuple(history)
 
     @staticmethod

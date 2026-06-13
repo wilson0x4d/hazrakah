@@ -53,7 +53,7 @@ def mock_factory_creates_equivalent_instance() -> None:
     m1 = Mock(origin=MyABC, name='test')
     m2 = Mock(origin=MyABC, name='test')
     assert m1.origin is m2.origin
-    assert m1._Mock__name == m2._Mock__name  # type: ignore[attr-defined]
+    assert m1._u.name == m2._u.name  # type: ignore[attr-defined]
 
 
 @fact
@@ -213,7 +213,7 @@ def side_effect_exception_class_via_assignment() -> None:
 def side_effect_iterable_via_assignment() -> None:
     """Attribute assignment of an iterable yields next value each call."""
     child = Mock()
-    child.do_thing.side_effect = iter([1, 2])
+    child.do_thing.side_effect = iter([1, 2])  # type: ignore[assignment, operator]
     assert child.do_thing() == 1
     assert child.do_thing() == 2
 
@@ -222,7 +222,7 @@ def side_effect_iterable_via_assignment() -> None:
 def side_effect_plain_list_via_assignment() -> None:
     """Attribute assignment of a plain list [1,2,3] yields 1, 2, 3 across calls."""
     child = Mock()
-    child.do_thing.side_effect = [1, 2, 3]
+    child.do_thing.side_effect = [1, 2, 3]  # type: ignore[assignment, operator]
     assert child.do_thing() == 1
     assert child.do_thing() == 2
     assert child.do_thing() == 3
@@ -234,7 +234,7 @@ def side_effect_reassignment_via_attribute() -> None:
     child = Mock()
     child.do_thing.side_effect = [1, 2]
     assert child.do_thing() == 1
-    child.do_thing.side_effect = lambda x: x * 100  # replace with callable
+    child.do_thing.side_effect = lambda x: x * 100  # type: ignore[assignment, operator]
     assert child.do_thing(5) == 500
 
 
@@ -242,7 +242,7 @@ def side_effect_reassignment_via_attribute() -> None:
 def side_effect_clearing_with_none_via_assignment() -> None:
     """Setting side_effect to None clears it -- mock returns self."""
     child = Mock()
-    child.do_thing.side_effect = lambda x: x * 2
+    child.do_thing.side_effect = lambda x: x * 2  # type: ignore[assignment, operator]
     assert child.do_thing(3) == 6
     child.do_thing.side_effect = None
     result = child.do_thing()
@@ -255,7 +255,7 @@ def side_effect_assignment_overwrites_fluent_config() -> None:
     m = Mock()
     m.do_thing.side_effect(lambda x: x * 10)  # fluent call form
     assert m.do_thing(3) == 30
-    m.do_thing.side_effect = lambda x: x + 100  # type: ignore[assignment]
+    m.do_thing.side_effect = lambda x: x + 100  # type: ignore[assignment, return-value, operator]
     assert m.do_thing(5) == 105
 
 
@@ -467,7 +467,7 @@ def mock_kwargs_multiple_reads_are_consistent() -> None:
 def mock_kwargs_none_value_works() -> None:
     """None is a valid configured value, distinguishable from missing."""
     m = Mock(nullable=None)
-    assert 'nullable' in m._internal_configured()
+    assert 'nullable' in m._u.configured
     assert m.nullable is None
 
 
@@ -522,7 +522,7 @@ def mock_kwargs_empty_noop() -> None:
     """Empty kwargs is a no-op — identical to bare Mock()."""
     m = Mock(**{})
     # Verify no attributes leaked from the empty dict expansion.
-    assert 'a' not in m._internal_configured()
+    assert 'a' not in m._u.configured
 
 
 @fact
@@ -545,7 +545,7 @@ def reset_preserve_stubs_false_clears_children() -> None:
 
     child.reset(preserve_stubs=False)
     assert child.call_count == 0
-    assert len(child._internal_children()) == 0
+    assert len(child._u.children) == 0
 
 
 @fact
@@ -553,10 +553,10 @@ def reset_preserve_sideeffects_false_clears_config() -> None:
     """preserve_sideeffects=False wipes __*-prefixed keys and has_* flags."""
     m = Mock()
     m.do_thing.returns(42)
-    assert object.__getattribute__(m.do_thing, '_Mock__has_return_value') is True
+    assert m.do_thing._u.has_return_value is True
 
     m.do_thing.reset(preserve_sideeffects=False)
-    assert object.__getattribute__(m.do_thing, '_Mock__has_return_value') is False
+    assert m.do_thing._u.has_return_value is False
 
 
 @fact
@@ -570,7 +570,7 @@ def reset_both_false_is_full_reset() -> None:
 
     parent.reset(preserve_stubs=False, preserve_sideeffects=False)
     assert parent.call_count == 0
-    assert len(parent._internal_children()) == 0
+    assert len(parent._u.children) == 0
 
 
 @fact
@@ -582,7 +582,7 @@ def reset_recursive_clears_grandchildren() -> None:
         m.do_thing.another_attr()
 
     m.reset(preserve_stubs=False)
-    assert len(m._internal_children()) == 0
+    assert len(m._u.children) == 0
 
 
 @fact
@@ -596,7 +596,7 @@ def origin_prepopulated_stubs_survive_preserve_sideeffects() -> None:
     """
     m = Mock(origin=MyProtocol)
     assert hasattr(m, 'do_thing')
-    assert 'do_thing' in m._internal_configured()
+    assert 'do_thing' in m._u.configured
 
     m.returns(42)  # writes '__return_value__' to m's own configured
     stub_before = m.do_thing
@@ -605,12 +605,12 @@ def origin_prepopulated_stubs_survive_preserve_sideeffects() -> None:
     m.reset(preserve_sideeffects=False)
 
     assert hasattr(m, 'do_thing')
-    assert 'do_thing' in m._internal_configured()
+    assert 'do_thing' in m._u.configured
     assert m.do_thing is stub_before
 
-    assert not object.__getattribute__(m, '_Mock__has_return_value')
+    assert not m._u.has_return_value
 
-    assert object.__getattribute__(stub_before, '_Mock__has_return_value') is True
+    assert stub_before._u.has_return_value is True
 
 
 @fact
@@ -623,14 +623,14 @@ def reset_mock_new_true_wipes_everything() -> None:
     m.lazy_attr = lazy_child  # add a non-origin child via setattr
 
     stub_before = m.do_thing
-    assert object.__getattribute__(stub_before, '_Mock__has_return_value') is True
+    assert stub_before._u.has_return_value is True
 
     m.reset_mock(new=True)
 
     assert hasattr(m, 'do_thing')
     assert m.do_thing is stub_before
 
-    assert not object.__getattribute__(m, '_Mock__has_return_value')
+    assert not m._u.has_return_value
 
 
 @fact
@@ -645,6 +645,6 @@ def reset_mock_new_false_keeps_children() -> None:
     assert hasattr(m, 'do_thing')
     assert m.do_thing is stub_before
 
-    assert not object.__getattribute__(m, '_Mock__has_return_value')
+    assert not m._u.has_return_value
 
-    assert object.__getattribute__(stub_before, '_Mock__has_return_value') is True
+    assert stub_before._u.has_return_value is True
