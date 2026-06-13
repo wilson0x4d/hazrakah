@@ -248,7 +248,10 @@ class Mock:
                 f"Cannot overwrite mock configuration for '{name}'. "
                 f"Use the fluent API (returns(), side_effect()) to configure."
             )
-        # Allow any other attribute -- goes to instance __dict__ normally.
+        # compat: to ease test porting, we want `side_effect` assignment to delegate to the fluent api
+        if name == 'side_effect':
+            self.side_effect(value)
+            return None  # __setattr__ must return None per Python data model
         object.__setattr__(self, name, value)
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
@@ -412,10 +415,55 @@ class Mock:
                 return True
         return False
 
-    def reset(self) -> None:
-        """Clear call history; keep configuration intact."""
+    def reset(
+        self,
+        *,
+        preserve_stubs: bool = True,
+        preserve_sideeffects: bool = True,
+    ) -> None:
+        """Reset this mock's call tracking and optionally its configuration.
+
+        :param preserve_stubs: If ``True`` (default), retain child stubs created by
+            attribute access or from an *origin*.  If ``False``, recursively clear
+            all children so that subsequent attribute access creates fresh mocks.
+        :param preserve_sideeffects: If ``True`` (default), keep fluent-configuration
+            values such as ``__return_value__`` and ``__side_effect__`` intact.  If
+            ``False``, wipe all ``__*-prefixed* configuration keys from
+            ``_Mock__configured`` and reset the has_* flags, but leave structural
+            stubs (origin-prepopulated members) untouched.
+        """
         object.__setattr__(self, '_Mock__call_history', [])
         object.__setattr__(self, '_Mock__side_effect_iter', None)
+
+        if not preserve_sideeffects:
+            object.__setattr__(self, '_Mock__has_return_value', False)
+            object.__setattr__(self, '_Mock__has_side_effect', False)
+            configured = self._internal_configured()
+            keys_to_delete = [k for k in configured if k.startswith('__')]
+            for key in keys_to_delete:
+                del configured[key]
+
+        if not preserve_stubs:
+
+            def _clear_children_recursively(m: Mock) -> None:
+                for child in m._internal_children().values():
+                    child.reset(preserve_stubs=True, preserve_sideeffects=True)
+                object.__setattr__(m, '_Mock__children', {})
+
+            _clear_children_recursively(self)
+
+    def reset_mock(self, *, new: bool = True) -> None:
+        """Compatibility shim for ``unittest.mock.Mock.reset_mock()``.
+
+        :param new: When ``True`` (default), clear children and all fluent-side
+            configuration so the mock behaves as if it were a fresh instance.
+            When ``False``, retain child stubs but still clear call history and
+            side-effect configuration.
+        """
+        self.reset(
+            preserve_stubs=not new,
+            preserve_sideeffects=False,
+        )
 
     @property
     def call_count(self) -> int:

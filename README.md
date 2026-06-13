@@ -13,8 +13,8 @@ This README is only a high-level introduction to **hazrakah**. For more detailed
 - **Protocols, ABCs, and Concretes** can be registered against **Factory Functions and Concretes**.
 - **Lifetime Decorators**; (OPTIONAL) Types decorated with  `@singleton`, `@transient` or `@instanced` can be registered with a single call to `register_decorated()`, simplifying orchestration.
 - **Implicit Multi-Registration**; Types decorated with `@provides` bind to all provided types (unless explicit types are specified during registration.)
-- **Fluent chaining**; All registration methods return `self`, enabling method-chained container setup.
-- Built-in mocking framework: `Mock` with fluent configuration, async-aware interception, an extensible set of matchers (`is_any`, `is_gt`, `contains`, `neg`, ...), and module-level patching.
+- **Fluent API**; All registration methods return `self`, enabling method-chained container setup.
+- **Mocking Support**: `Mock` with fluent configuration, async-aware interception, an extensible set of matchers (`is_any`, `is_gt`, `contains`, `neg`, ...), and module-level patching.
 
 ## Installation
 

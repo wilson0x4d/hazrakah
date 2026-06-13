@@ -173,6 +173,93 @@ def fluent_chaining_on_same_mock_allows_multiple_side_effects() -> None:
 
 
 @fact
+def side_effect_callable_via_assignment() -> None:
+    """Attribute assignment of a callable activates side-effect behavior."""
+    child = Mock()
+
+    def _add_one(first_arg: int, **_kwargs: object) -> int:
+        return first_arg + 1
+
+    child.do_thing.side_effect = _add_one  # type: ignore[assignment]
+    assert child.do_thing(41) == 42
+
+
+@fact
+def side_effect_exception_instance_via_assignment() -> None:
+    """Attribute assignment of an exception instance raises it on call."""
+    m = Mock()
+    err = ValueError('boom')
+    m.do_thing.side_effect = err
+    try:
+        m.do_thing()
+        assert False, 'Should have raised'
+    except ValueError as e:
+        assert e is err
+
+
+@fact
+def side_effect_exception_class_via_assignment() -> None:
+    """Attribute assignment of an exception class raises an instance on call."""
+    m = Mock()
+    m.do_thing.side_effect = ValueError
+    try:
+        m.do_thing()
+        assert False, 'Should have raised'
+    except ValueError:
+        pass
+
+
+@fact
+def side_effect_iterable_via_assignment() -> None:
+    """Attribute assignment of an iterable yields next value each call."""
+    child = Mock()
+    child.do_thing.side_effect = iter([1, 2])
+    assert child.do_thing() == 1
+    assert child.do_thing() == 2
+
+
+@fact
+def side_effect_plain_list_via_assignment() -> None:
+    """Attribute assignment of a plain list [1,2,3] yields 1, 2, 3 across calls."""
+    child = Mock()
+    child.do_thing.side_effect = [1, 2, 3]
+    assert child.do_thing() == 1
+    assert child.do_thing() == 2
+    assert child.do_thing() == 3
+
+
+@fact
+def side_effect_reassignment_via_attribute() -> None:
+    """Re-assigning side_effect via attribute replaces prior configuration."""
+    child = Mock()
+    child.do_thing.side_effect = [1, 2]
+    assert child.do_thing() == 1
+    child.do_thing.side_effect = lambda x: x * 100  # replace with callable
+    assert child.do_thing(5) == 500
+
+
+@fact
+def side_effect_clearing_with_none_via_assignment() -> None:
+    """Setting side_effect to None clears it -- mock returns self."""
+    child = Mock()
+    child.do_thing.side_effect = lambda x: x * 2
+    assert child.do_thing(3) == 6
+    child.do_thing.side_effect = None
+    result = child.do_thing()
+    assert result is child.do_thing  # returns self when side_effect is None
+
+
+@fact
+def side_effect_assignment_overwrites_fluent_config() -> None:
+    """Attribute assignment replaces prior fluent API configuration."""
+    m = Mock()
+    m.do_thing.side_effect(lambda x: x * 10)  # fluent call form
+    assert m.do_thing(3) == 30
+    m.do_thing.side_effect = lambda x: x + 100  # type: ignore[assignment]
+    assert m.do_thing(5) == 105
+
+
+@fact
 def call_detail_is_frozen_dataclass() -> None:
     d = CallDetail(
         timestamp=1.0,
@@ -445,3 +532,119 @@ def mock_kwargs_inner_mock_has_own_config() -> None:
     outer = Mock(wrapped=inner)
     assert outer.wrapped is inner
     assert outer.wrapped.inner_value == 'deep'
+
+
+@fact
+def reset_preserve_stubs_false_clears_children() -> None:
+    """preserve_stubs=False removes all children; config kept."""
+    child = Mock()
+    child.do_thing.returns(99)
+    for _ in range(3):
+        child.do_thing()
+    assert child.do_thing.call_count == 3
+
+    child.reset(preserve_stubs=False)
+    assert child.call_count == 0
+    assert len(child._internal_children()) == 0
+
+
+@fact
+def reset_preserve_sideeffects_false_clears_config() -> None:
+    """preserve_sideeffects=False wipes __*-prefixed keys and has_* flags."""
+    m = Mock()
+    m.do_thing.returns(42)
+    assert object.__getattribute__(m.do_thing, '_Mock__has_return_value') is True
+
+    m.do_thing.reset(preserve_sideeffects=False)
+    assert object.__getattribute__(m.do_thing, '_Mock__has_return_value') is False
+
+
+@fact
+def reset_both_false_is_full_reset() -> None:
+    """preserve_stubs=False + preserve_sideeffects=False clears everything."""
+    parent = Mock(origin=MyProtocol)
+    parent.do_thing.returns(42)
+    child = Mock()
+    child.other.returns('x')
+    parent.another_child = child  # add via setattr
+
+    parent.reset(preserve_stubs=False, preserve_sideeffects=False)
+    assert parent.call_count == 0
+    assert len(parent._internal_children()) == 0
+
+
+@fact
+def reset_recursive_clears_grandchildren() -> None:
+    """Children are cleared recursively down the tree."""
+    m = Mock()
+    _ = m.do_thing.another_attr  # noqa: F841 — triggers lazy grandchild creation
+    for _ in range(5):
+        m.do_thing.another_attr()
+
+    m.reset(preserve_stubs=False)
+    assert len(m._internal_children()) == 0
+
+
+@fact
+def origin_prepopulated_stubs_survive_preserve_sideeffects() -> None:
+    """Structural stubs from origin remain after parent's wipe.
+
+    reset(preserve_sideeffects=False) clears the current mock's own config but
+    does not affect children's configs. The structural entry 'do_thing' in
+    configured (pre-populated from origin) is preserved because its key is a
+    real attribute name, not __*-prefixed.
+    """
+    m = Mock(origin=MyProtocol)
+    assert hasattr(m, 'do_thing')
+    assert 'do_thing' in m._internal_configured()
+
+    m.returns(42)  # writes '__return_value__' to m's own configured
+    stub_before = m.do_thing
+    stub_before.returns(99)
+
+    m.reset(preserve_sideeffects=False)
+
+    assert hasattr(m, 'do_thing')
+    assert 'do_thing' in m._internal_configured()
+    assert m.do_thing is stub_before
+
+    assert not object.__getattribute__(m, '_Mock__has_return_value')
+
+    assert object.__getattribute__(stub_before, '_Mock__has_return_value') is True
+
+
+@fact
+def reset_mock_new_true_wipes_everything() -> None:
+    """reset_mock(new=True) clears children and config on the current mock."""
+    m = Mock(origin=MyProtocol)
+    m.do_thing.returns(42)
+    lazy_child = Mock()
+    lazy_child.x = 1
+    m.lazy_attr = lazy_child  # add a non-origin child via setattr
+
+    stub_before = m.do_thing
+    assert object.__getattribute__(stub_before, '_Mock__has_return_value') is True
+
+    m.reset_mock(new=True)
+
+    assert hasattr(m, 'do_thing')
+    assert m.do_thing is stub_before
+
+    assert not object.__getattribute__(m, '_Mock__has_return_value')
+
+
+@fact
+def reset_mock_new_false_keeps_children() -> None:
+    """reset_mock(new=False) retains children but clears config and history."""
+    m = Mock(origin=MyProtocol)
+    stub_before = m.do_thing
+    m.do_thing.returns(42)
+
+    m.reset_mock(new=False)
+
+    assert hasattr(m, 'do_thing')
+    assert m.do_thing is stub_before
+
+    assert not object.__getattribute__(m, '_Mock__has_return_value')
+
+    assert object.__getattribute__(stub_before, '_Mock__has_return_value') is True
