@@ -6,4 +6,3 @@ Reference
 
    SKILL
    hazrakah
-   mocks

@@ -213,24 +213,6 @@ b = container.resolve(IBar)
 assert a is b  # same instance — shared cache across all provided interfaces
 ```
 
-### When @provides Activates vs. Does Not Activate
-
-`@provides` is a **passive marker** -- activation depends entirely on how the container registers the decorated class.
-
-- **Activates**: when you call `register_singleton`, `register_transient`, or `register_instance` with **no second argument** (no explicit type override).
-- **Does NOT activate**: when an explicit type is provided as the first positional argument to `register_*`. In that case, only the explicitly specified key is registered; `@provides` metadata on the target class is completely ignored.
-
-```python
-# @provides activates -- multi-registers under IFoo, IBar, and MultiImpl:
-@provides(IFoo, IBar)
-class MultiImpl: ...
-container.register_singleton(MultiImpl)  # no second argument
-
-# @provides does NOT activate -- only IFoo is registered:
-container.register_singleton(IFoo, MultiImpl)  # explicit type override
-# container.resolve(IBar)  → raises KeyError — @provides was ignored
-```
-
 **Important:** `@provides` and lifecycle decorators (`@singleton`, `@transient`, `@instanced`) are mutually exclusive on the same class. Use one approach or the other.
 
 ## Mock Library
@@ -281,7 +263,7 @@ m.calculate(17)
 
 assert m.calculate.was_called()
 assert m.calculate.call_count == 2
-assert m.calculate.called_with(is_gt(10), is_any())
+assert m.calculate.was_called_with(is_gt(10), is_any())
 assert m.calls[0].result == 42
 ```
 
@@ -311,25 +293,13 @@ assert not parent.was_called()
 # parent unaffected after exit — auto-reset
 ```
 
-### Constructor kwargs for fixtures
-
-Use ``**kwargs`` to set initial attribute values, providing a concise alternative to fluent stubbing for fixture-like objects:
-
-```python
-user = Mock(first_name='Alice', email='alice@example.com')
-assert user.first_name == 'Alice'
-assert user.email == 'alice@example.com'
-```
-
-This pattern is especially useful for inline test fixtures where fluent chaining would be verbose. The ``side_effect`` special key still configures calling behavior on the mock itself rather than being stored as an attribute.
-
 ## Matchers
 
-Matchers enable flexible call verification via natural `__eq__` dispatch in `called_with()`:
+Matchers enable flexible call verification via natural `__eq__` dispatch in `was_called_with()`:
 
 | Matcher | Meaning | Example |
 | :--- | :--- | :--- |
-| `is_any()` | matches anything | `called_with(is_any(), "exact")` |
+| `is_any()` | matches anything | `was_called_with(is_any(), "exact")` |
 | `contains(value)` | value in string/list/dict-keys | `contains("foo")` |
 | `is_gt(n)` | strictly greater than n | `is_gt(10)` |
 | `is_gte(n)` | >= n | `is_gte(0)` |
@@ -347,7 +317,7 @@ from hazrakah.mocks import (
 
 mock(42, "hello world", 3.14, ["a", "b"], "admin")
 
-assert mock.called_with(
+assert mock.was_called_with(
     is_gt(40),                        # first arg > 40
     contains("world"),                # second arg contains "world"
     is_gte(3),                        # third arg >= 3
@@ -368,7 +338,7 @@ class PositiveInteger(Matcher):
         return isinstance(other, int) and other > 0
 
 mock(42)
-assert mock.called_with(PositiveInteger())
+assert mock.was_called_with(PositiveInteger())
 ```
 
 ## Patch
@@ -394,7 +364,7 @@ assert mock_connect.was_called()
 def test_send_email(mock_send):
     mock_send.returns(True)
     myapp.sending.send_email("user@example.com")
-    assert mock_send.called_with(is_type(str))
+    assert mock_send.was_called_with(is_type(str))
 ```
 
 ### Decorator (async)
