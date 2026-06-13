@@ -5,7 +5,7 @@ user-invocable: true
 disable-model-invocation: false
 ---
 
-`hazrakah` is a tiny but powerful zero-dependency DI container for Python 3.11+ with lifetime management, hierarchical scopes, decorator-based registration, fluent chaining, and a built-in mock library with argument matchers and module-level patching.
+`hazrakah` is a tiny but powerful zero-dependency DI container for Python 3.11+ with lifetime management, hierarchical scopes, decorator-based registration, and fluent chaining.
 
 - **Install:** `python3 -m pip install hazrakah`
 - **Docs:** https://hazrakah.readthedocs.io/
@@ -20,7 +20,6 @@ from hazrakah import (
     Container, provides, singleton, transient, instanced,
     Factory, Target, Lifetime, RegistrationError,
 )
-from hazrakah.mocks import Mock, is_gt, is_any, patch
 ```
 
 ### Creating a container
@@ -215,178 +214,6 @@ assert a is b  # same instance — shared cache across all provided interfaces
 
 **Important:** `@provides` and lifecycle decorators (`@singleton`, `@transient`, `@instanced`) are mutually exclusive on the same class. Use one approach or the other.
 
-## Mock Library
-
-A lightweight `Mock` with fluent configuration, call tracking, argument matchers, delegate forwarding (partial doubles/spies), and child-context isolation:
-
-```python
-from hazrakah.mocks import Mock
-
-# Origin conformance — passes isinstance checks
-mock = Mock(origin=UserService)
-mock.get_user.returns({"id": 1, "name": "Alice"})
-mock.is_authenticated.returns(False)
-assert isinstance(mock, UserService)
-```
-
-### Fluent stubbing
-
-```python
-m = Mock()
-(
-    m
-    .connect
-    .side_effect(ConnectionError("timeout"))
-    .disconnect
-    .returns(True)
-)
-```
-
-### Side effects
-
-```python
-# Callable — receives the call arguments directly (*args, **kwargs)
-m.process.side_effect(lambda arg1, arg2: f"{arg1} processed {arg2}")
-
-# Iterable — yields one value per call
-m.next_status.side_effect(iter(["pending", "running", "done"]))
-
-# Exception — raises on every call
-m.failing.side_effect(ValueError("boom"))
-```
-
-### Call tracking and verification
-
-```python
-m.calculate(42)
-m.calculate(17)
-
-assert m.calculate.was_called()
-assert m.calculate.call_count == 2
-assert m.calculate.was_called_with(is_gt(10), is_any())
-assert m.calls[0].result == 42
-```
-
-### Delegates (spy / partial-double)
-
-Unconfigured calls forward to the real object; configured ones override:
-
-```python
-real = RealService()
-spy = Mock(delegate=real)
-
-spy.real_method()               # → real.real_method() (forwarded)
-spy.fake_method.returns("mock")
-assert spy.fake_method() == "mock"  # not forwarded — stubbed
-```
-
-### Independent child context
-
-Yields a fresh clone whose configuration and history are independent:
-
-```python
-parent = Mock(origin=UserService)
-with parent as child:
-    child.get_user.returns({"id": 99})
-    child.get_user()         # call recorded on child only
-assert not parent.was_called()
-# parent unaffected after exit — auto-reset
-```
-
-## Matchers
-
-Matchers enable flexible call verification via natural `__eq__` dispatch in `was_called_with()`:
-
-| Matcher | Meaning | Example |
-| :--- | :--- | :--- |
-| `is_any()` | matches anything | `was_called_with(is_any(), "exact")` |
-| `contains(value)` | value in string/list/dict-keys | `contains("foo")` |
-| `is_gt(n)` | strictly greater than n | `is_gt(10)` |
-| `is_gte(n)` | >= n | `is_gte(0)` |
-| `is_lt(n)` | strictly less than n | `is_lt(100)` |
-| `is_lte(n)` | <= n | `is_lte(50)` |
-| `is_in(a, b, c)` | equals any of the values | `is_in("a", "b")` |
-| `is_type(*types)` | isinstance check | `is_type(str, int)` |
-| `neg(inner)` | negates inner matcher | `neg(is_in("admin", "root"))` |
-
-```python
-from hazrakah.mocks import (
-    Mock, is_any, contains, is_gt, is_gte,
-    is_lt, is_lte, is_in, is_type, neg,
-)
-
-mock(42, "hello world", 3.14, ["a", "b"], "admin")
-
-assert mock.was_called_with(
-    is_gt(40),                        # first arg > 40
-    contains("world"),                # second arg contains "world"
-    is_gte(3),                        # third arg >= 3
-    is_in("a", "b"),                  # fourth arg is "a" or "b"
-    neg(is_in("admin", "root")),      # fifth arg NOT admin/root
-)
-```
-
-### Custom matchers
-
-Subclass `Matcher` and implement `__eq__`:
-
-```python
-from hazrakah.mocks import Matcher
-
-class PositiveInteger(Matcher):
-    def __eq__(self, other: object) -> bool:
-        return isinstance(other, int) and other > 0
-
-mock(42)
-assert mock.was_called_with(PositiveInteger())
-```
-
-## Patch
-
-Replace module-level attributes with `Mock` objects — works as a context manager or decorator (sync + async):
-
-### Context manager
-
-```python
-from hazrakah.mocks import patch
-
-with patch("myapp.database.connect") as mock_connect:
-    mock_connect.returns(True)
-    result = myapp.database.connect()  # returns True, no real DB call
-assert mock_connect.was_called()
-# original restored automatically on exit
-```
-
-### Decorator (sync)
-
-```python
-@patch("myapp.sending.send_email")
-def test_send_email(mock_send):
-    mock_send.returns(True)
-    myapp.sending.send_email("user@example.com")
-    assert mock_send.was_called_with(is_type(str))
-```
-
-### Decorator (async)
-
-```python
-@patch("myapp.cache.get")
-async def test_async_lookup(mock_get):
-    mock_get.returns({"key": "value"})
-    result = await myapp.cache.get("key")
-    assert result == {"key": "value"}
-```
-
-### With origin conformance
-
-```python
-from hazrakah.mocks import patch
-from myapp.db import Connection
-
-with patch("myapp.database.connect", origin=Connection) as m:
-    assert isinstance(m, Connection)
-```
-
 ## Common Patterns
 
 ### Composition root — lock down config before app startup
@@ -403,24 +230,6 @@ container = (
     .register_singleton(IDatabase, DatabasePool)
     .freeze()
 )
-```
-
-### Test setup with mocks and DI
-
-```python
-from hazrakah import Container
-from hazrakah.mocks import Mock
-
-def build_test_container(fake_auth: Mock) -> Container:
-    return (
-        Container()
-        .register_instance(IAuth, fake_auth)
-        .register_transient(IRepository, FakeRepository)
-    )
-
-fake_auth = Mock(origin=IAuth)
-fake_auth.is_authenticated.returns(True)
-container = build_test_container(fake_auth)
 ```
 
 ### Scoped request handling

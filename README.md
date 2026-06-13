@@ -180,38 +180,6 @@ This is intentional. The second positional argument on any `register_*` method i
 | `register_instance(my_obj)` (no explicit instance) | YES | type(obj) + all `@provides` interfaces |
 | `register_instance(IFoo, my_obj)` (explicit instance) | NO | Only IFoo |
 
-### Built-in mocking framework
-
-A lightweight `Mock` with fluent configuration, call tracking, argument matchers, and module-level `patch()`.
-
-```python
-from hazrakah.mocks import Mock, is_gt, contains, neg, is_in
-
-m = Mock()
-
-# Fluent stubbing.
-m.get_status.returns("ok")
-assert m.get_status() == "ok"
-
-# Side-effects on the child mock (fluent call, not direct assignment).
-m.compute.side_effect(lambda x: 10 if x > 5 else 20)
-assert m.compute(7) == 10
-assert m.compute(2) == 20
-
-# Call tracking.
-assert m.compute.was_called()
-assert m.compute.call_count == 2
-
-# Composed matchers.
-m.filter.returns(True)(neg(contains("blocked")))
-assert m.filter("allowed") is True
-
-# Constructor kwargs for concise fixture creation
-row = Mock(migration='alpha', status='active')
-assert row.migration == 'alpha'
-assert row.status == 'active'
-```
-
 
 ## Contact
 
