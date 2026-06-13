@@ -195,8 +195,8 @@ A lightweight ``Mock`` with fluent configuration, call tracking, argument matche
     m = Mock()
 
     # Fluent stubbing.
-    m.get_status.returns("ok")
-    assert m.get_status() == "ok"
+    m.get_status.returns('ok')
+    assert m.get_status() == 'ok'
 
     # Side-effects on the child mock (fluent call, not direct assignment).
     m.compute.side_effect(lambda x: 10 if x > 5 else 20)
@@ -204,13 +204,13 @@ A lightweight ``Mock`` with fluent configuration, call tracking, argument matche
     assert m.compute(2) == 20
 
     # Call tracking.
-    assert m.compute.was_called_with(is_gt(5), is_any())
-    assert m.compute.was_called_with(is_in(1, 2, 3))
+    assert m.compute.called_with(is_gt(5), is_any())
+    assert m.compute.called_with(is_in(1, 2, 3))
     assert m.compute.call_count == 2
 
     # Composed matchers.
-    m.filter.returns(True)(neg(contains("blocked")))
-    assert m.filter("allowed") is True
+    m.filter.returns(True)(neg(contains('blocked')))
+    assert m.filter('allowed') is True
 
 Constructor kwargs for fixtures work alongside fluent stubbing as a concise alternative:
 

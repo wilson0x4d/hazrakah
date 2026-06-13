@@ -473,7 +473,7 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         return self
 
     def _union_display_name(self, t: Type[Any]) -> str:
-        """Return a human-readable name for a union type alias, if available."""        
+        """Return a human-readable name for a union type alias, if available."""
         return getattr(t, '__name__', str(t))
 
     def _resolve_union(self, t: Type[Any]) -> Any:
@@ -534,17 +534,17 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
             parts = []
             for member, _, lifetime, _reg in distinct_matches:
                 name = getattr(member, '__name__', str(member))
-                parts.append(f"  - {name} ({lifetime.name})")
+                parts.append(f'  - {name} ({lifetime.name})')
             display_name = self._union_display_name(t)
             raise ResolutionError(
-                f"No unique registration for {display_name}:\n" + "\n".join(parts),
+                f'No unique registration for {display_name}:\n' + '\n'.join(parts),
                 matched=matches,
             )
 
         # zero matches
-        names = " | ".join(getattr(m, '__name__', str(m)) for m in unresolved)
+        names = ' | '.join(getattr(m, '__name__', str(m)) for m in unresolved)
         display_name = self._union_display_name(t)
-        raise ResolutionError(f"No registration found for {display_name}: {names}")
+        raise ResolutionError(f'No registration found for {display_name}: {names}')
 
     @overload
     def resolve(self, t: Type[T]) -> T:

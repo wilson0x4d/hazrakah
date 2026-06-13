@@ -14,12 +14,12 @@ Usage::
     from hazrakah.mocks import Mock, is_any, is_gt, is_in
 
     mock = Mock()
-    mock(42, "hello", ["a", "b"])
+    mock(42, 'hello', ['a', 'b'])
 
-    assert mock.was_called_with(
+    assert mock.called_with(
         is_gt(10),           # first arg > 10
         is_any(),             # second arg can be anything
-        is_in("a", "b"),     # third arg is "a" or "b"
+        is_in('a', 'b'),     # third arg is 'a' or 'b'
     )
 
 Custom matchers: subclass :class:`Matcher` and implement ``__eq__``::
@@ -41,7 +41,7 @@ class Matcher:
     """Base class for argument matchers.
 
     Subclasses must implement ``__eq__(self, other: Any) -> bool`` and return
-    ``True`` when *other* matches the expected pattern. This allows :meth:`Mock.was_called_with`
+    ``True`` when *other* matches the expected pattern. This allows :meth:`Mock.called_with`
     to dispatch via Python's equality operator naturally.
     """
 
@@ -281,8 +281,8 @@ class neg(Matcher):
     """
     Wraps another matcher and negates its result.
 
-    This enables composing matchers freely -- e.g. ``neg(is_in("admin", "root"))``
-    matches any value that is not "admin" or "root".
+    This enables composing matchers freely -- e.g. ``neg(is_in('admin', 'root'))``
+    matches any value that is not 'admin' or 'root'.
 
     :param inner: The matcher to negate.
     :returns: A :class:`Matcher` instance.

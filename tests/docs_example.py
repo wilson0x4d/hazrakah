@@ -15,8 +15,6 @@ from punit import fact
 from typing import Protocol
 
 
-# ── Shared placeholder types (module scope) ───────────────────────────────────
-
 class IFoo(Protocol):
     def foo(self) -> int: ...
 
@@ -50,7 +48,7 @@ class Bar:
         pass
 
     def bar(self) -> str:
-        return "bar"
+        return 'bar'
 
 
 class Fizz:
@@ -74,8 +72,6 @@ class CloseableResource:
     def close(self) -> None:
         self.closed = True
 
-
-# ── Test functions ────────────────────────────────────────────────────────────
 
 @fact
 def test_basic_lifetime_registration() -> None:
@@ -156,7 +152,7 @@ def test_declarative_decorators() -> None:
     @transient(types=IBar)
     class TransientBar:
         def bar(self) -> str:
-            return "bar"
+            return 'bar'
 
     @instanced  # binds to the class itself
     class InstancedBuzz:
@@ -203,7 +199,7 @@ def test_provides_multi_registration() -> None:
     assert isinstance(obj_b, MultiImpl)
     assert obj_a is obj_b  # @provides caches across interfaces
     assert obj_a.foo() == 99
-    assert obj_b.bar() == "99"
+    assert obj_b.bar() == '99'
 
 
 @fact
@@ -212,8 +208,8 @@ def test_mock_framework() -> None:
     m = Mock()
 
     # Configure return values via fluent API.
-    m.get_status.returns("ok")
-    assert m.get_status() == "ok"
+    m.get_status.returns('ok')
+    assert m.get_status() == 'ok'
 
     # Side-effects as a fluent method call.
     def _sum(a: int, b: int) -> int:
@@ -237,14 +233,14 @@ def test_mock_framework() -> None:
     assert is_in(1, 2, 3).__eq__(second_call.parameters[0][0])
 
     # contains() — string substring or container membership.
-    m.greet.returns("hello")
-    assert m.greet("hi") == "hello"
-    assert m.greet.was_called_with(contains("hi"))
+    m.greet.returns('hello')
+    assert m.greet('hi') == 'hello'
+    assert m.greet.called_with(contains('hi'))
 
     # neg() — negate a matcher.
-    m.filter.returns(True)(neg(contains("blocked")))
-    assert m.filter("allowed") is True
+    m.filter.returns(True)(neg(contains('blocked')))
+    assert m.filter('allowed') is True
 
     # is_type() — match by runtime type.
     m.process.returns(0)(is_type(str))
-    m.process("hello")  # matches → returns 0
+    m.process('hello')  # matches → returns 0

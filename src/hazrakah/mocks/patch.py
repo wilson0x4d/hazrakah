@@ -13,16 +13,16 @@ Usage::
     from hazrakah.mocks import patch, Mock
 
     # Context manager
-    with patch("myapp.database.connect") as mock_connect:
-        mock_connect.returns("connected")
+    with patch('myapp.database.connect') as mock_connect:
+        mock_connect.returns('connected')
 
     # Decorator (sync)
-    @patch("myapp.database.connect")
+    @patch('myapp.database.connect')
     def test_something(mock_connect):
         assert mock_connect.was_called()
 
     # Decorator (async)
-    @patch("myapp.database.connect")
+    @patch('myapp.database.connect')
     async def test_async(mock_connect):
         assert mock_connect.origin is not None
 
@@ -48,7 +48,7 @@ T = TypeVar('T', bound=Callable[..., Any])
 
 def _resolve_path(target_path: str) -> tuple[ModuleType, str]:
     """
-    Resolve a dotted path (e.g. ``"myapp.database.connect"``) to ``(module, attr_name)``.
+    Resolve a dotted path (e.g. ``'myapp.database.connect'``) to ``(module, attr_name)``.
 
     :param target_path: Dotted attribute path.
     :returns: A tuple of the resolved module and the last segment as *attr_name*.
@@ -67,7 +67,7 @@ def _resolve_path(target_path: str) -> tuple[ModuleType, str]:
 
     if not module_path_parts or len(parts) == len(module_path_parts):
         raise AttributeError(
-            f"Cannot find module containing attribute '{target_path}'"
+            f'Cannot find module containing attribute "{target_path}"'
         )
 
     attr_name = parts[-1]
@@ -85,11 +85,11 @@ class patch:
     Usage::
 
         # As context manager:
-        with patch("myapp.db.connect") as mock_connect:
-            mock_connect.returns("connected")
+        with patch('myapp.db.connect') as mock_connect:
+            mock_connect.returns('connected')
 
         # As decorator:
-        @patch("myapp.db.connect")
+        @patch('myapp.db.connect')
         def test_something(mock_connect):
             assert mock_connect.was_called()
     """
@@ -103,7 +103,7 @@ class patch:
         """
         Create a new patch for the given dotted path.
 
-        :param target_path: Dotted attribute path to replace (e.g. ``"myapp.database.connect"``).
+        :param target_path: Dotted attribute path to replace (e.g. ``'myapp.database.connect'``).
         :param origin: Optional type for Mock virtual-subclass registration.
         :param kwargs: Additional keyword arguments forwarded to the Mock constructor.
         """

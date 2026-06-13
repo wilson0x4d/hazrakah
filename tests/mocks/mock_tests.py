@@ -288,12 +288,12 @@ def call_tracking_records_args_kwargs() -> None:
 
 
 @fact
-def was_called_returns_true_after_call() -> None:
+def called_returns_false_before_call_and_true_after() -> None:
     """Direct call on the mock itself."""
     m = Mock()
-    assert not m.was_called()
+    assert not m.called
     m()
-    assert m.was_called()
+    assert m.called
 
 
 @fact
@@ -394,7 +394,7 @@ def parent_mock_unaffected_by_child_context() -> None:
     with parent as child:
         child.do_thing.returns('child')
         child.do_thing()
-    assert not parent.was_called()
+    assert not parent.called
 
 
 class UserService:

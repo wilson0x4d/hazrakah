@@ -22,14 +22,14 @@ Usage::
     assert user.email == 'alice@example.com'
 
     # Matcher-based verification
-    assert mock.was_called_with(
+    assert mock.called_with(
         is_any(),
-        neg(contains("foo")),
+        neg(contains('foo')),
         is_in(1, 2, 3))
 
     # Module-level patching
-    with patch("some.module.ClassName") as m:
-        m.method.returns("result")
+    with patch('some.module.ClassName') as m:
+        m.method.returns('result')
 """
 
 from .matcher import (
@@ -44,11 +44,19 @@ from .matcher import (
     is_lt,
     is_type,
 )
-from .mock import CallDetail, Mock, MockError
+from .mock import (
+    CallDetail,
+    CallEntry,
+    CallEntryList,
+    Mock,
+    MockError
+)
 from .patch import patch
 
 __all__ = [
     'CallDetail',
+    'CallEntry',
+    'CallEntryList',
     'Matcher',
     'Mock',
     'MockError',

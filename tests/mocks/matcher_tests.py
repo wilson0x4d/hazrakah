@@ -149,21 +149,21 @@ def custom_matcher_subclass_works_via_eq_dispatch() -> None:
 from hazrakah.mocks import Mock
 
 @fact
-def matchers_work_in_positional_was_called_with() -> None:
+def matchers_work_in_positional_called_with() -> None:
     mock_obj = Mock()
     mock_obj(42, [1, 2, 3], 'hello world')
-    assert mock_obj.was_called_with(is_gt(10), contains(2), contains('world'))
+    assert mock_obj.called_with(is_gt(10), contains(2), contains('world'))
 
 
 @fact
-def matchers_work_in_keyword_was_called_with() -> None:
+def matchers_work_in_keyword_called_with() -> None:
     mock_obj = Mock()
     mock_obj(42, foo='bar')
-    assert mock_obj.was_called_with(is_any(), foo=is_in('bar', 'baz'))
+    assert mock_obj.called_with(is_any(), foo=is_in('bar', 'baz'))
 
 
 @fact
 def non_matching_matcher_returns_false() -> None:
     mock_obj = Mock()
     mock_obj(5)
-    assert not mock_obj.was_called_with(is_gt(10))
+    assert not mock_obj.called_with(is_gt(10))

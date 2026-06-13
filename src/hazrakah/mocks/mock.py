@@ -17,9 +17,9 @@ Usage::
     # Create a mock with origin conformance
     mock_userservice = Mock(origin=UserService)
     mock_userservice.is_authenticated.returns(False)
-    mock_userservice.get_user.returns("Guest")
+    mock_userservice.get_user.returns('Guest')
 
-    assert mock_userservice.was_called_with(is_gt(0))
+    assert mock_userservice.called_with(is_gt(0))
 
     # Constructor kwargs for fixture-style initialization
     row = Mock(migration='alpha', id=1)
@@ -40,6 +40,7 @@ from typing import (
     Optional,
     Union,
 )
+import warnings
 
 
 class MockError(Exception):
@@ -67,6 +68,64 @@ class CallDetail:
     error: BaseException | None
 
 
+@dataclass(frozen=True)
+class CallEntry:
+    """
+    Immutable record of a call for parent-child aggregation tracking.
+
+    :ivar path: Absolute dotted path name (e.g. ``'Mock.foo.bar'``).
+    :ivar args: Positional arguments passed to the mock.
+    :ivar kwargs: Keyword arguments passed to the mock.
+    """
+
+    path: str
+    args: tuple[Any, ...]
+    kwargs: dict[str, Any]
+
+    def __repr__(self) -> str:  # type: ignore[override]
+        if not self.kwargs and not self.path:
+            return repr(self.args)
+        args_repr = ', '.join(repr(a) for a in self.args)
+        kwargs_items = [f'{k}={v!r}' for k, v in self.kwargs.items()]
+        if args_repr and kwargs_items:
+            sep = (f'({args_repr}), '
+                   f'{", ".join(kwargs_items)}')
+        elif args_repr:
+            sep = f'({args_repr})'
+        elif kwargs_items:
+            sep = ', '.join(kwargs_items)
+        else:
+            sep = ''
+        return f'{self.path}({sep})' if self.path else f'({sep})'
+
+    def __eq__(self, other: Any) -> bool:  # type: ignore[override]
+        if not isinstance(other, CallEntry):
+            return NotImplemented
+        result = (self.path == other.path and
+                  self.args == other.args and
+                  self.kwargs == other.kwargs)
+        return result
+
+
+class CallEntryList(tuple):  # type: ignore[type-arg]
+    """Tuple of :class:`CallEntry` supporting partial-sublist matching via ``__contains__``."""
+
+    def __contains__(self, item: object) -> bool:  # type: ignore[override]
+        if isinstance(item, CallEntryList):
+            target = list(item)
+            if not target:
+                return True
+            for i in range(len(self) - len(target) + 1):
+                if all(CallEntryList._matches(self[i + j], target[j]) for j in range(len(target))):
+                    return True
+            return False
+        return super().__contains__(item)
+
+    @staticmethod
+    def _matches(entry: CallEntry, other: CallEntry) -> bool:
+        return entry.path == other.path and entry.args == other.args and entry.kwargs == other.kwargs
+
+
 class Mock:
     """
     Lightweight mock object for dependency injection testing.
@@ -82,9 +141,9 @@ class Mock:
         # Create a mock that conforms to UserService structurally
         mock = Mock(origin=UserService)
         mock.is_authenticated.returns(False)
-        mock.get_user.returns("Guest")
+        mock.get_user.returns('Guest')
 
-        assert mock.was_called_with(42)
+        assert mock.called_with(42)
 
     Child mocks (returned by attribute access) are cached -- ``mock.foo is mock.foo``.
     """
@@ -106,8 +165,8 @@ class Mock:
         origin: Optional[type] = None,
         *,
         delegate: Any = None,
-        name: str = '',
-        validate: bool = False,
+        name: str = 'Mock',
+        _validate: bool = False,
         **kwargs: Any,
     ) -> None:
         """
@@ -115,7 +174,7 @@ class Mock:
 
         :param origin: The type this mock stands in for (enables isinstance checks).
         :param delegate: A real object whose methods are forwarded when not configured.
-        :param name: Debug identifier for the mock.
+        :param name: Debug identifier for the mock. Defaults to ``'Mock'``.
         :param validate: If True, validate call arguments against inspectable signatures.
         :param kwargs: Arbitrary keyword arguments set as initial attribute values.
             Each key becomes an accessible attribute that returns the given value.
@@ -125,9 +184,13 @@ class Mock:
         object.__setattr__(self, '_Mock__origin', None)
         object.__setattr__(self, '_Mock__delegate', None)
         object.__setattr__(self, '_Mock__name', name)
+        object.__setattr__(self, '_Mock__path', name)
+        object.__setattr__(self, '_Mock__parent', None)
         object.__setattr__(self, '_Mock__children', {})
         object.__setattr__(self, '_Mock__configured', {})
         object.__setattr__(self, '_Mock__call_history', [])
+        object.__setattr__(self, '_Mock__all_calls', [])
+        object.__setattr__(self, '_Mock__child_calls', [])
         object.__setattr__(self, '_Mock__has_return_value', False)
         object.__setattr__(self, '_Mock__has_side_effect', False)
         object.__setattr__(self, '_Mock__side_effect_iter', None)
@@ -166,6 +229,10 @@ class Mock:
         """Internal helper to access the call history list safely."""
         return object.__getattribute__(self, '_Mock__call_history')
 
+    def _internal_all_calls(self) -> list[CallEntry]:
+        """Internal helper to access aggregated call entries safely."""
+        return object.__getattribute__(self, '_Mock__all_calls')
+
     def _populate_members(self, origin: type) -> None:
         """Pre-create child Mock stubs for all public members of the origin."""
         members: set[str] = set()
@@ -198,7 +265,9 @@ class Mock:
                 members.add(attr_name)
 
         for name in members:
-            child = Mock(name=f'{self._Mock__name}.{name}' if self._Mock__name else name)
+            child_name = f'{getattr(self, "_Mock__name")}.{name}' if getattr(self, "_Mock__name") else name
+            child = Mock(name=child_name)
+            object.__setattr__(child, '_Mock__parent', self)
             self._set_child_configured(name, child)
 
     def _set_child_configured(self, name: str, child: Mock) -> None:
@@ -223,7 +292,9 @@ class Mock:
         delegate = object.__getattribute__(self, '_Mock__delegate')
         if delegate is not None and hasattr(delegate, name):
             child = Mock()
-            child._Mock__name = f'{self._Mock__name}.{name}' if self._Mock__name else name
+            child._Mock__name = f'{getattr(self, "_Mock__name")}.{name}' if getattr(self, '_Mock__name') else name
+            child._Mock__path = f'{getattr(self, "_Mock__path")}.{name}' if getattr(self, '_Mock__path') else name
+            object.__setattr__(child, '_Mock__parent', self)
             # Store the real method reference for forwarding in __call__
             real_attr = getattr(delegate, name)
             child._Mock__delegate_method = real_attr  # type: ignore[attr-defined]
@@ -235,18 +306,20 @@ class Mock:
         children = self._internal_children()
         if name not in children:
             child = Mock()
-            child._Mock__name = f'{self._Mock__name}.{name}' if self._Mock__name else name
+            child._Mock__name = f'{getattr(self, "_Mock__name")}.{name}' if getattr(self, '_Mock__name') else name
+            child._Mock__path = f'{getattr(self, "_Mock__path")}.{name}' if getattr(self, '_Mock__path') else name
+            object.__setattr__(child, '_Mock__parent', self)
             children[name] = child
         return children[name]
 
-    def __setattr__(self, name: str, value: Any) -> None:
+    def __setattr__(self, name: str, value: Any) -> None:  # type: ignore[override]
         """Accept arbitrary attributes; raise MockError for configured stub clobbering."""
         # Check if this name corresponds to a configured mock stub (clobbering attempt)
         configured = self._internal_configured()
         if name in configured:
             raise MockError(
-                f"Cannot overwrite mock configuration for '{name}'. "
-                f"Use the fluent API (returns(), side_effect()) to configure."
+                f'Cannot overwrite mock configuration for "{name}". '
+                f'Use the fluent API (returns(), side_effect()) to configure.'
             )
         # compat: to ease test porting, we want `side_effect` assignment to delegate to the fluent api
         if name == 'side_effect':
@@ -293,9 +366,9 @@ class Mock:
                     # that matches a method on the delegate)
                     delegate = object.__getattribute__(self, '_Mock__delegate')
                     if delegate is not None:
-                        name_mangled = self._Mock__name
+                        name = getattr(self, '_Mock__name')
                         attr_name = (
-                            name_mangled.rsplit('.', 1)[-1] if name_mangled else '__call__'
+                            name.rsplit('.', 1)[-1] if name else '__call__'
                         )
                         method = getattr(delegate, attr_name, None)
                         if method is not None and callable(method):
@@ -315,7 +388,7 @@ class Mock:
             error=error,
         )
         self._internal_call_history().append(record)
-
+        self._propagate_call(record)
         return result
 
     def _evaluate_side_effect(
@@ -336,7 +409,7 @@ class Mock:
             cached_iter = object.__getattribute__(self, '_Mock__side_effect_iter')
             if cached_iter is None:
                 new_iter = iter(side_effect)
-                self._Mock__side_effect_iter = new_iter
+                setattr(self, '_Mock__side_effect_iter', new_iter)
                 return next(new_iter)
             return next(cached_iter)  # Raises StopIteration when exhausted
 
@@ -345,6 +418,27 @@ class Mock:
             return side_effect(*args, **kwargs)
 
         return self
+
+    def _propagate_call(self, call_detail: CallDetail) -> None:
+        """Append this call entry to ``_all_calls`` and ``_child_calls`` on self and ancestors."""
+        path = object.__getattribute__(self, '_Mock__path')  # type: ignore[arg-type]
+        entry = CallEntry(
+            path=path,
+            args=call_detail.parameters[0],
+            kwargs=call_detail.parameters[1],
+        )
+
+        # Self always gets the entry in _all_calls (direct call to this mock)
+        object.__getattribute__(self, '_Mock__all_calls').append(entry)
+
+        # Walk up parent chain for ancestor aggregation
+        obj = object.__getattribute__(self, '_Mock__parent')
+        while obj is not None:
+            ancestors_all = object.__getattribute__(obj, '_Mock__all_calls')
+            ancestors_child = object.__getattribute__(obj, '_Mock__child_calls')
+            ancestors_all.append(entry)
+            ancestors_child.append(entry)  # reached via attribute access on this ancestor
+            obj = object.__getattribute__(obj, '_Mock__parent')
 
     def __eq__(self, other: Any) -> bool:  # type: ignore[override]
         """Identity-only comparison (two Mocks are never equal unless same object)."""
@@ -356,7 +450,7 @@ class Mock:
 
     def __enter__(self) -> Mock:
         """Clone self into a fresh child for independent configuration."""
-        name_mangled = self._Mock__name
+        name_mangled = getattr(self, '_Mock__name')
         clone_name = f'{name_mangled} (child)' if name_mangled else ''
         origin_val = object.__getattribute__(self, '_Mock__origin')
         delegate_val = object.__getattribute__(self, '_Mock__delegate')
@@ -369,9 +463,9 @@ class Mock:
 
     def __exit__(
         self,
-        exc_type: Any,
-        exc_val: Any,
-        exc_tb: Any,
+        _exc_type: Any,
+        _exc_val: Any,
+        _exc_tb: Any,
     ) -> None:
         """Reset call history on exit."""
         self.reset()
@@ -395,11 +489,20 @@ class Mock:
         object.__setattr__(self, '_Mock__has_return_value', False)
         return self
 
-    def was_called(self) -> bool:
-        """Return True if this mock has been called at least once."""
-        return len(self._internal_call_history()) > 0
+    @property
+    def called(self) -> bool:
+        """Return ``True`` if this mock has been called at least once."""
+        return len(self._internal_all_calls()) > 0  # type: ignore[arg-type]
 
-    def was_called_with(
+    def was_called(self) -> bool:
+        warnings.warn(
+            '`was_called()` is deprecated and will be removed in a future version. Use `called` property instead.',
+            category=DeprecationWarning,
+            stacklevel=2
+        )
+        return self.called
+
+    def called_with(
         self,
         *args: Any,
         **kwargs: Any,
@@ -414,6 +517,18 @@ class Mock:
                self._matches_kwargs(record.parameters[1], kwargs):
                 return True
         return False
+
+    def was_called_with(
+        self,
+        *args: Any,
+        **kwargs: Any,
+    ) -> bool:
+        warnings.warn(
+            '`was_called_with()` is deprecated and will be removed in a future version. Use `called_with`() instead.',
+            category=DeprecationWarning,
+            stacklevel=2
+        )
+        return self.called_with(args, kwargs)
 
     def reset(
         self,
@@ -432,6 +547,10 @@ class Mock:
             ``_Mock__configured`` and reset the has_* flags, but leave structural
             stubs (origin-prepopulated members) untouched.
         """
+        for m in self._traverse():
+            object.__setattr__(m, '_Mock__all_calls', [])
+            object.__setattr__(m, '_Mock__child_calls', [])
+
         object.__setattr__(self, '_Mock__call_history', [])
         object.__setattr__(self, '_Mock__side_effect_iter', None)
 
@@ -464,6 +583,22 @@ class Mock:
             preserve_stubs=not new,
             preserve_sideeffects=False,
         )
+
+    def _traverse(self):  # type: ignore[no-untyped-def]
+        """Yield self and all descendants."""
+        yield self
+        for child in self._internal_children().values():
+            yield from child._traverse()
+
+    @property
+    def mock_calls(self) -> CallEntryList:
+        """All calls to this mock and its children, including dotted paths."""
+        return CallEntryList(self._internal_all_calls())
+
+    @property
+    def child_calls(self) -> CallEntryList:
+        """Calls reached through child attribute access only (not self-invocations)."""
+        return CallEntryList(object.__getattribute__(self, '_Mock__child_calls'))
 
     @property
     def call_count(self) -> int:
@@ -513,6 +648,8 @@ class Mock:
 
 __all__ = [
     'CallDetail',
+    'CallEntry',
+    'CallEntryList',
     'Mock',
     'MockError',
 ]

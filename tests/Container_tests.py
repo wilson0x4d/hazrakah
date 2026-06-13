@@ -452,11 +452,11 @@ def union_both_unregistered_concrete_resolves_first() -> None:
 
     class ConcreteA:
         def __init__(self) -> None:
-            self.tag = "A"
+            self.tag = 'A'
 
     class ConcreteB:
         def __init__(self) -> None:
-            self.tag = "B"
+            self.tag = 'B'
 
     resolved = container.resolve(ConcreteA | ConcreteB)  # type: ignore[arg-type]
     assert isinstance(resolved, ConcreteA), 'Should resolve the first concrete member'
