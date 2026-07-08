@@ -6,6 +6,7 @@ from __future__ import annotations
 from abc import ABC
 from enum import IntEnum
 import inspect
+import re
 import sys
 from types import NoneType, TracebackType, UnionType
 from typing import (
@@ -615,20 +616,75 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
             case _:  # pragma: no cover
                 raise RuntimeError(f'Unexpected lifetime {registration.lifetime!r}')
 
-    def register_decorated(self) -> Container:
+    def register_decorated(
+        self,
+        namespace_pattern: Optional[str] = None,
+        class_pattern: Optional[str] = None,
+    ) -> Container:
         """
         Create registrations based on discovered decorators ``@singleton``, ``@transient``, and ``@instanced``.
 
         This method is idempotent -- repeated calls overwrite registrations (last-in-wins).
 
+        :param namespace_pattern: A regular expression pattern used to filter which decorated types are registered.
+            The pattern is compiled once and matched against the **namespace** (i.e. ``__module__``) of both
+            each entry's *interface* type and *target* callable/class. If **either** matches, registration proceeds.
+            When ``None`` (the default), all decorated types are registered with no filtering.
+
+            Usage::
+
+                # only register types defined in the "myapp.services" module tree
+                container.register_decorated(namespace_pattern=r"myapp\\.services\\..*")
+
+        :param class_pattern: A regular expression pattern used to filter by **class name** (i.e. ``__qualname__``) of
+            each entry's *interface* and *target*. If **either** matches, registration proceeds for that info.
+            When ``None`` (the default), no class-name filtering is applied.
+
         :returns: ``self`` for method chaining.
         """
+
+        def _get_namespace(obj: Any) -> str:
+            """Return the module name of *obj*, which is either a type or a callable."""
+            return getattr(obj, '__module__', '')
+
+        def _get_class_name(obj: Any) -> str:
+            """Return the class/function name of *obj* (sans namespace/scope).
+
+            For nested classes and local definitions, ``__qualname__`` may include
+            the enclosing scope (e.g. ``_func.<locals>.ClassName``).  We extract
+            only the final dotted component to get the bare class/function name.
+            """
+            qual = getattr(obj, '__qualname__', '') or getattr(obj, '__name__', '')
+            return qual.rsplit('.', 1)[-1] if qual else ''
+
+        ns_pattern: Optional[re.Pattern[str]] = None
+        if namespace_pattern is not None:
+            ns_pattern = re.compile(namespace_pattern)
+
+        cls_pattern: Optional[re.Pattern[str]] = None
+        if class_pattern is not None:
+            cls_pattern = re.compile(class_pattern)
+
         # Import lazily to avoid circular import at module load time.
         from .lifetime_decorators import _DecorationInfoManager, _sort_decoration_infos
 
         infos = _DecorationInfoManager.instance().get_all()
         sorted_infos = _sort_decoration_infos(infos)
         for info in sorted_infos:
+            # Namespace filter: skip if neither interface nor target matches
+            if ns_pattern is not None:
+                iface_ns = _get_namespace(info.interface)
+                target_ns = _get_namespace(info.target)
+                if not ns_pattern.search(iface_ns) and not ns_pattern.search(target_ns):
+                    continue
+
+            # Class name filter: skip if neither interface nor target matches
+            if cls_pattern is not None:
+                iface_cls = _get_class_name(info.interface)
+                target_cls = _get_class_name(info.target)
+                if not cls_pattern.search(iface_cls) and not cls_pattern.search(target_cls):
+                    continue
+
             match info.lifetime:
                 case Lifetime.SINGLETON:
                     self.register_singleton(info.interface, info.target)  # type: ignore[arg-type]

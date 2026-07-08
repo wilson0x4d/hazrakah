@@ -483,7 +483,6 @@ def union_both_unregistered_concrete_resolves_first() -> None:
     assert not base.is_registered(ProtocolDroid), 'Parent should not see child-only registration'
 
 
-# -- fluent chaining tests --
 
 
 @fact

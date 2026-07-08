@@ -9,6 +9,8 @@ to reset the global manager between tests.
 
 from __future__ import annotations
 
+from typing import Protocol
+
 from hazrakah import (
     Lifetime,
     RegistrationError,
@@ -578,3 +580,217 @@ def instanced_incompatible_with_provides() -> None:
         assert 'cannot apply' in str(exc).lower()
         return
     assert False, 'expected RegistrationError'
+
+
+@fact
+def namespace_pattern_none_registers_all():
+    """Default (None) still registers every decorated entry."""
+
+    class IFooNs:
+        pass
+
+    @singleton(types=IFooNs)  # noqa: F811
+    class NsTarget:
+        def __init__(self) -> None:  # type: ignore[misc]
+            self.ok = True
+
+    container = Container()
+    container.register_decorated(namespace_pattern=None)
+    resolved = container.resolve(IFooNs)  # type: ignore[arg-type]
+    assert isinstance(resolved, NsTarget)
+    assert resolved.ok is True
+
+
+@fact
+def namespace_pattern_matches_interface():
+    """Pattern matches the interface's module → entry registered."""
+
+    class IModA:
+        pass
+
+    @singleton(types=IModA)  # noqa: F811
+    class TargetA:
+        def __init__(self) -> None:  # type: ignore[misc]
+            self.tag = 'a'
+
+    container = Container()
+    # Classes defined inside a function get the test module's dotted name as __module__
+    # ('tests.lifetime_decorators_tests'); match the containing module
+    container.register_decorated(namespace_pattern='lifetime_decorators')
+    resolved = container.resolve(IModA)  # type: ignore[arg-type]
+    assert isinstance(resolved, TargetA)
+
+
+@fact
+def namespace_pattern_matches_target():
+    """Pattern matches the target's module → entry registered (even if interface differs)."""
+
+    class IAny:
+        pass
+
+    @singleton(types=IAny)  # noqa: F811
+    class AnyTarget:
+        def __init__(self) -> None:  # type: ignore[misc]
+            self.tag = 'x'
+
+    # Both interface and target are defined inline in the same file → same module
+    container = Container()
+    container.register_decorated(namespace_pattern='lifetime_decorators')
+    resolved = container.resolve(IAny)  # type: ignore[arg-type]
+    assert isinstance(resolved, AnyTarget)
+
+
+@fact
+def namespace_pattern_skips_non_matching():
+    """Pattern doesn't match either namespace → entry is skipped."""
+
+    class ISkipped(Protocol):
+        """Abstract protocol -- won't be auto-registered by resolve()."""
+        pass
+
+    @singleton(types=ISkipped)  # noqa: F811
+    class SkippedClass:
+        def __init__(self) -> None:  # type: ignore[misc]
+            self.should_not_exist = True
+
+    # Pattern matches none of our test module's namespace → entry is skipped
+    container = Container()
+    container.register_decorated(namespace_pattern=r'ZZZ_nonexistent_ZZZ')
+    assert not container.is_registered(ISkipped)
+
+
+@fact
+def namespace_pattern_allows_partial_match():
+    """Both interface and target are checked with re.search (partial match)."""
+
+    class IFooSub1:
+        pass
+
+    @singleton(types=IFooSub1)  # noqa: F811
+    class FooService1:
+        def __init__(self) -> None:  # type: ignore[misc]
+            self.svc = 1
+
+    # 'decorators' is a substring of 'tests.lifetime_decorators_tests'
+    container = Container()
+    container.register_decorated(namespace_pattern='decorators')
+    resolved = container.resolve(IFooSub1)  # type: ignore[arg-type]
+    assert isinstance(resolved, FooService1)
+
+
+@fact
+def class_pattern_none_registers_all():
+    """Default (None) for class_pattern still registers every decorated entry."""
+
+    class IClassNs:
+        pass
+
+    @singleton(types=IClassNs)  # noqa: F811
+    class NsTargetCls:
+        def __init__(self) -> None:  # type: ignore[misc]
+            self.ok = True
+
+    container = Container()
+    container.register_decorated(class_pattern=None)
+    resolved = container.resolve(IClassNs)  # type: ignore[arg-type]
+    assert isinstance(resolved, NsTargetCls)
+    assert resolved.ok is True
+
+
+@fact
+def class_pattern_matches_interface_class_name():
+    """Pattern matches the interface's __qualname__ → entry registered."""
+
+    class IBar42:
+        pass
+
+    @singleton(types=IBar42)  # noqa: F811
+    class BarTarget42:
+        def __init__(self) -> None:  # type: ignore[misc]
+            self.tag = 'bar'
+
+    container = Container()
+    container.register_decorated(class_pattern='^IBar42$')
+    resolved = container.resolve(IBar42)  # type: ignore[arg-type]
+    assert isinstance(resolved, BarTarget42)
+
+
+@fact
+def class_pattern_matches_target_class_name():
+    """Pattern matches the target's __qualname__ → entry registered."""
+
+    class IWildcard:
+        pass
+
+    @singleton(types=IWildcard)  # noqa: F811
+    class FooServiceX:
+        def __init__(self) -> None:  # type: ignore[misc]
+            self.tag = 'foo'
+
+    container = Container()
+    # Interface is 'IWildcard', target is 'FooServiceX'; pattern matches target
+    container.register_decorated(class_pattern='^FooServiceX$')
+    resolved = container.resolve(IWildcard)  # type: ignore[arg-type]
+    assert isinstance(resolved, FooServiceX)
+
+
+@fact
+def class_pattern_skips_non_matching():
+    """Pattern doesn't match either class name → entry is skipped."""
+
+    class IBar7(Protocol):
+        """Abstract protocol -- won't be auto-registered by resolve()."""
+        pass
+
+    @singleton(types=IBar7)  # noqa: F811
+    class SkippedClassZZ:
+        def __init__(self) -> None:  # type: ignore[misc]
+            self.should_not_exist = True
+
+    container = Container()
+    container.register_decorated(class_pattern=r'ZZZ_no_match_ZZZ')
+    assert not container.is_registered(IBar7)
+
+
+@fact
+def class_and_namespace_patterns_both_must_match():
+    """When both filters are provided, an info is registered only if BOTH pass."""
+
+    class IFilterMe:
+        pass
+
+    @singleton(types=IFilterMe)  # noqa: F811
+    class TargetClass1:
+        def __init__(self) -> None:  # type: ignore[misc]
+            self.tag = 'yes'
+
+    container = Container()
+    # Both patterns match → registered
+    container.register_decorated(
+        namespace_pattern='decorators',
+        class_pattern='TargetClass',
+    )
+    resolved = container.resolve(IFilterMe)  # type: ignore[arg-type]
+    assert isinstance(resolved, TargetClass1)
+
+
+@fact
+def class_and_namespace_patterns_disjoint_filters():
+    """Namespace matches but class doesn't → entry skipped (AND logic)."""
+
+    class IFilterNo(Protocol):
+        """Abstract protocol -- won't be auto-registered."""
+        pass
+
+    @singleton(types=IFilterNo)  # noqa: F811
+    class TargetClass99:
+        def __init__(self) -> None:  # type: ignore[misc]
+            self.should_not_exist = True
+
+    container = Container()
+    # namespace matches ('decorators') but class 'NoMatch' does not → skipped
+    container.register_decorated(
+        namespace_pattern='decorators',
+        class_pattern=r'^NoMatch$',
+    )
+    assert not container.is_registered(IFilterNo)

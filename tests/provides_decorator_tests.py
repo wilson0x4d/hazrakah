@@ -19,9 +19,6 @@ from hazrakah import Container, provides
 from hazrakah.lifetime_decorators import _DecorationInfoManager
 
 
-# -- Shared helper: reset decorator manager between tests --
-
-
 def _reset_decorations():
     """Reset the global decoration info manager for test isolation."""
     _DecorationInfoManager._clear_store()
