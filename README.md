@@ -99,6 +99,43 @@ assert isinstance(container.resolve(IFoo), Foo)
 assert isinstance(container.resolve(IBar), Bar)
 ```
 
+### Caching with `Cached[T]`
+
+The `Cached[T]` class wraps a factory callable so its result is produced once and re-used until the TTL window elapses.  The factory receives a resolver argument, matching hazrakah's standard factory contract (see :py:data:`hazrakah.DependencyRegistry.Factory`).  Register it with any container lifetime to combine DI resolution with time-bound caching:
+
+```python
+from datetime import timedelta
+from hazrakah import Container, Cached
+
+class ConfigSource:
+    def load(self) -> str:
+        return 'loaded'
+
+# TTL accepts float (seconds) or timedelta; default is 47.0 seconds.
+cache = Cached(lambda c: ConfigSource(), ttl=timedelta(seconds=47))
+
+first = cache(object())   # factory called once (TTL not yet elapsed)
+second = cache(object())  # cached value returned; factory not re-invoked
+assert first is second     # same instance
+```
+
+Every ``Cached`` instance exposes a ``ttl`` read-only property and a ``reset()`` method for manual cache eviction:
+
+```python
+cache = Cached(lambda c: ConfigSource(), ttl=timedelta(seconds=0))
+# Zero TTL — factory called on every access.
+assert cache(object()) is not cache(object())  # two distinct instances
+cache.reset()  # discard cached value
+_ = cache(object())  # re-invokes factory
+```
+
+You can also pass ``ttl`` as a plain float (seconds):
+
+```python
+cache = Cached(lambda c: ConfigSource(), ttl=120.0)  # 120 seconds
+assert cache.ttl == timedelta(seconds=120)
+```
+
 ### Declarative lifetime decorators
 
 Mark intent at class-definition time with `@singleton`, `@transient`, or `@instanced`, then register everything in one call.

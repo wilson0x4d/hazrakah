@@ -167,18 +167,44 @@ The ``@provides`` decorator is a **passive marker** -- it stores metadata only, 
 This is intentional. The second positional argument on any ``register_*`` method is the **explicit type override**. When you provide it, you are telling the container exactly which key to register against -- and ``@provides`` does not interfere.
 
 +-----------------------------------------------+------------------------+-------------------------------------+
-| Registration call                             | @provides activates?   | Registered keys                     |
-+-----------------------------------------------+------------------------+-------------------------------------+
-| ``register_singleton(MyClass)``               | YES                    | MyClass + all @provides interfaces  |
-+-----------------------------------------------+------------------------+-------------------------------------+
-| ``register_singleton(IFoo, MyClass)``         | NO                     | Only IFoo                           |
-+-----------------------------------------------+------------------------+-------------------------------------+
-| ``register_transient(MyClass)``               | YES                    | MyClass + all @provides interfaces  |
-+-----------------------------------------------+------------------------+-------------------------------------+
-| ``register_transient(IFoo, MyClass)``         | NO                     | Only IFoo                           |
-+-----------------------------------------------+------------------------+-------------------------------------+
-| ``register_instance(my_obj)`` (no instance)   | YES                    | type(obj) + all @provides interfaces|
-+-----------------------------------------------+------------------------+-------------------------------------+
-| ``register_instance(IFoo, my_obj)`` (explicit)| NO                     | Only IFoo                           |
-+-----------------------------------------------+------------------------+-------------------------------------+
+
+Caching with ``Cached[T]``
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The ``Cached[T]`` generic type wraps a factory callable so its result is produced once and re-used until the TTL window elapses.  The factory receives a resolver as its first argument, matching hazrakah's standard factory contract (see :py:data:`hazrakah.DependencyRegistry.Factory`).  It can be combined with any container lifetime to add time-bound caching on top of dependency injection.
+
+.. code-block:: python
+
+    from datetime import timedelta
+    from hazrakah import Cached
+
+    class ConfigSource:
+        def load(self) -> str:
+            return 'loaded'
+
+    # TTL accepts float (seconds) or timedelta; default is 47.0 seconds.
+    cache = Cached(lambda c: ConfigSource(), ttl=timedelta(seconds=47))
+
+    first = cache(object())   # factory called once (TTL not yet elapsed)
+    second = cache(object())  # cached value returned; factory not re-invoked
+    assert first is second     # same instance
+
+
+Manual expiration and zero-TTL modes are also supported:
+
+.. code-block:: python
+
+    always_miss = Cached(lambda c: ConfigSource(), ttl=timedelta(seconds=0))
+    assert always_miss(object()) is not always_miss(object())  # factory called each time
+
+    cache = Cached(lambda c: ConfigSource())
+    cache.reset()                          # discard cached value
+    fresh = cache(object())                # re-invokes factory
+
+``ttl`` also accepts a plain float (seconds), exposed as a :py:class:`timedelta` property:
+
+.. code-block:: python
+
+    cache = Cached(lambda c: ConfigSource(), ttl=120.0)  # 120 seconds
+    assert cache.ttl == timedelta(seconds=120)
 

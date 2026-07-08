@@ -8,8 +8,17 @@ example snippet.  The docs strip away assertions and shared type definitions so
 that each block is self-contained and readable without context.
 """
 
-from hazrakah import Container, ResolutionError
-from hazrakah import singleton, transient, instanced, provides
+from datetime import timedelta
+
+from hazrakah import (
+    Cached,
+    Container,
+    ResolutionError,
+    singleton,
+    transient,
+    instanced,
+    provides,
+)
 from punit import fact
 from typing import Protocol
 
@@ -70,6 +79,10 @@ class CloseableResource:
 
     def close(self) -> None:
         self.closed = True
+
+
+# Sentinel used for Cached resolver tests.
+_cached_resolver = object()
 
 
 @fact
@@ -199,3 +212,121 @@ def test_provides_multi_registration() -> None:
     assert obj_a is obj_b  # @provides caches across interfaces
     assert obj_a.foo() == 99
     assert obj_b.bar() == '99'
+
+
+class _ConfigSource:
+    """Helper class for the Caching example tests."""
+
+    def load(self) -> str:
+        return 'loaded'
+
+
+@fact
+def test_caching_with_cached_generic() -> None:
+    """Cached[T] wraps a factory that receives a resolver with TTL-based expiry."""
+
+    def factory(c):  # noqa: ANN201, ARG001
+        return _ConfigSource()
+
+    cache = Cached(factory, ttl=timedelta(seconds=47))
+
+    # First access — factory called once.
+    first = cache(_cached_resolver)  # type: ignore[arg-type]
+
+    # Second access — cached value returned; factory not re-invoked.
+    second = cache(_cached_resolver)  # type: ignore[arg-type]
+    assert first is second  # same instance
+
+
+@fact
+def test_caching_container_integration() -> None:
+    """Cached instance can be wired into Container registrations."""
+
+    def factory(c):  # noqa: ANN201, ARG001
+        return _ConfigSource()
+
+    cache = Cached(factory, ttl=timedelta(seconds=47))
+
+    c = Container()
+    c.register_transient(_ConfigSource, lambda r: cache(r))  # type: ignore[arg-type]
+
+    first = c.resolve(_ConfigSource)
+    second = c.resolve(_ConfigSource)
+    assert first is second
+
+
+@fact
+def test_cached_timeout_and_reset() -> None:
+    """Zero TTL always re-invokes; reset discards cached value."""
+    call_count = 0
+
+    def factory(c):  # noqa: ANN201, ARG001
+        nonlocal call_count
+        call_count += 1
+        return _ConfigSource()
+
+    cache = Cached(factory, ttl=timedelta(seconds=0))
+    first = cache(_cached_resolver)  # type: ignore[arg-type]
+    second = cache(_cached_resolver)  # type: ignore[arg-type]
+    assert first is not second  # zero TTL — always miss
+    assert call_count == 2
+
+    # reset discards the cached value and timestamp
+    cache.reset()
+    _ = cache(_cached_resolver)  # type: ignore[arg-type]
+    assert call_count == 3  # factory re-invoked after reset
+
+
+@fact
+def test_cached_ttl_property() -> None:
+    """Cached exposes ttl as a timedelta property."""
+
+    def factory(c):  # noqa: ANN201, ARG001
+        return _ConfigSource()
+
+    cache = Cached(factory, ttl=timedelta(seconds=120))
+    assert cache.ttl == timedelta(seconds=120)
+
+
+@fact
+def test_cached_forwards_resolver_to_factory() -> None:
+    """The resolver is passed from __call__ through to the factory."""
+    received = []
+
+    def factory(c):  # noqa: ANN201
+        received.append(c)
+        return _ConfigSource()
+
+    cache = Cached(factory)
+    my_resolver = object()
+    _ = cache(my_resolver)  # type: ignore[arg-type]
+    assert len(received) == 1
+    assert received[0] is my_resolver
+
+
+@fact
+def test_cached_factory_is_called_once_within_ttl() -> None:
+    """Only the first call within the TTL invokes the factory."""
+    call_count = 0
+
+    def factory(c):  # noqa: ANN201, ARG001
+        nonlocal call_count
+        call_count += 1
+        return 'ok'
+
+    cache = Cached(factory, ttl=timedelta(seconds=47))
+    _ = cache(_cached_resolver)  # type: ignore[arg-type]
+    assert call_count == 1
+    _ = cache(_cached_resolver)  # type: ignore[arg-type]
+    assert call_count == 1
+
+
+@fact
+def test_cached_float_ttl_accepted() -> None:
+    """Float TTL (seconds) is accepted and converted internally."""
+
+    def factory(c):  # noqa: ANN201, ARG001
+        return _ConfigSource()
+
+    cache = Cached(factory, ttl=90.0)  # type: ignore[arg-type]
+    assert cache.ttl == timedelta(seconds=90)
