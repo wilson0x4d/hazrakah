@@ -130,6 +130,7 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
     .. automethod:: __exit__
     """
 
+    __self_resolve: bool
     __frozen: bool
     __singletons: dict[Type[Any], Any]
     __outer_scope: Optional[Container]
@@ -137,8 +138,9 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
     __proto_co_code: Any
     __tracked: set[Any]
 
-    def __init__(self, outer_scope: Optional[Container] = None, frozen: bool = False) -> None:
+    def __init__(self, outer_scope: Optional[Container] = None, frozen: bool = False, self_resolve: bool = True) -> None:
         super().__setattr__('__frozen', False)
+        self.__self_resolve = self_resolve
         self.__singletons = {}
         self.__outer_scope = outer_scope
         self.__registrations = {}
@@ -593,6 +595,8 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
             else:
                 if is_optional:
                     return None
+                if self.__self_resolve is True and t in (DependencyRegistry, DependencyResolver, ScopedDependencyResolver):
+                    return cast(Any, self)
                 raise ResolutionError(f'No registration found for {t!r}')
         match registration.lifetime:
             case Lifetime.INSTANCE:
@@ -703,7 +707,7 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         return self
 
     def create_scope(self, frozen: Optional[bool] = False) -> Container:
-        return Container(outer_scope=self, frozen=frozen or getattr(self, '__frozen'))
+        return Container(outer_scope=self, frozen=frozen or getattr(self, '__frozen'), self_resolve=self.__self_resolve)
 
     def freeze(self) -> None:
         """

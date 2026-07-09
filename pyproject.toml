@@ -22,7 +22,7 @@ dependencies = [
 dev = [
     "coverage",
     "mypy",
-    "punit (>=1.10.0)",
+    "punit (>=1.10.8)",
     "py-conventional-semver",
     "twine"
 ]

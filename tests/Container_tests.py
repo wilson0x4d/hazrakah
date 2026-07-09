@@ -4,8 +4,17 @@
 from __future__ import annotations
 
 from abc import ABC
-from hazrakah import Container, DependencyResolver, RegistrationError, ResolutionError, provides
-from typing import Optional, Protocol, TypeVar, runtime_checkable
+from hazrakah import (
+    Container,
+    DependencyRegistry,
+    DependencyResolver,
+    RegistrationError,
+    ResolutionError,
+    ScopedDependencyResolver,
+    Target,
+    provides,
+)
+from typing import Any, Optional, Protocol, Type, TypeVar, runtime_checkable
 from punit import fact
 from punit.assertions.exceptions import raises
 
@@ -483,8 +492,6 @@ def union_both_unregistered_concrete_resolves_first() -> None:
     assert not base.is_registered(ProtocolDroid), 'Parent should not see child-only registration'
 
 
-
-
 @fact
 def register_instance_returns_self() -> None:
     """register_instance returns self, enabling chaining."""
@@ -818,3 +825,194 @@ def register_decorated_returns_self() -> None:
     manager.get_all()  # warm up if needed
     result = Container().register_decorated()
     assert isinstance(result, Container), 'register_decorated should return self'
+
+
+@fact
+def resolve_dependency_registry_returns_self() -> None:
+    """"Resolving for ``DependencyRegistry`` returns the container itself."""
+
+    c1: Container = Container()
+    result: DependencyRegistry = c1.resolve(DependencyRegistry)  # type: ignore[arg-type]
+    assert result is c1, 'resolve(DependencyRegistry) should return self'
+
+
+@fact
+def resolve_dependency_resolver_returns_self() -> None:
+    """Resolving for ``DependencyResolver`` returns the container itself."""
+
+    c1: Container = Container()
+    result: DependencyResolver = c1.resolve(DependencyResolver)  # type: ignore[arg-type]
+    assert result is c1, 'resolve(DependencyResolver) should return self'
+
+
+@fact
+def resolve_scoped_dependency_resolver_returns_self() -> None:
+    """Resolving for ``ScopedDependencyResolver`` returns the container itself."""
+
+    c1: Container = Container()
+    result: ScopedDependencyResolver = c1.resolve(ScopedDependencyResolver)  # type: ignore[arg-type]
+    assert result is c1, 'resolve(ScopedDependencyResolver) should return self'
+
+
+@fact
+def resolve_interface_types_are_idempotent() -> None:
+    """Every resolve of the same interface returns the identical container."""
+
+    c = Container()
+
+    r1: DependencyRegistry = c.resolve(DependencyRegistry)  # type: ignore[arg-type]
+    r2: DependencyRegistry = c.resolve(DependencyRegistry)  # type: ignore[arg-type]
+    assert r1 is r2, 'Should return the same object on every resolve'
+
+    r3: DependencyResolver = c.resolve(DependencyResolver)  # type: ignore[arg-type]
+    assert r1 is r3
+
+
+@fact
+def resolve_interface_type_can_be_used_as_dependency() -> None:
+    """"A class depending on ``DependencyResolver`` gets injected the container."""
+
+    class IDependent(Protocol):
+        def start(self) -> None:
+            ...
+
+    class DependentImpl:
+        def __init__(self, resolver: DependencyResolver) -> None:  # type: ignore[arg-type]
+            self.resolver = resolver
+
+        def start(self) -> None:
+            assert isinstance(self.resolver, Container)
+
+    c = Container()
+    obj: IDependent = c.resolve(DependentImpl)
+    obj.start()
+
+
+@fact
+def resolve_interface_type_can_be_used_as_scoped_dependency() -> None:
+    """"A class depending on ``ScopedDependencyResolver`` gets injected the container."""
+
+    class IScopedDependent(Protocol):
+        def build_scope(self) -> ScopedDependencyResolver:
+            ...
+
+    class ScopedDependentImpl:
+        def __init__(self, resolver: ScopedDependencyResolver) -> None:  # type: ignore[arg-type]
+            self.resolver = resolver
+
+        def build_scope(self) -> ScopedDependencyResolver:
+            return self.resolver.create_scope()
+
+    c = Container()
+    obj = c.resolve(ScopedDependentImpl)
+    scope = obj.build_scope()
+    assert scope is not None
+
+
+@fact
+def resolve_interface_type_in_scopes_is_same_as_parent() -> None:
+    """Resolving an interface type in a child scope returns the parent container."""
+
+    parent = Container()
+    parent.register_instance(IService, ServiceA())
+    child = parent.create_scope()
+
+    parent_result = parent.resolve(IService)  # type: ignore[arg-type]
+    child_result = child.resolve(IService)  # type: ignore[arg-type]
+
+    assert parent_result is child_result, 'Child scope should return the same container for interface types'
+
+
+@fact
+def resolve_interface_type_with_explicit_instance_registration() -> None:
+    """When an explicit instance is registered, that instance wins over self-return."""
+
+    class FakeRegistry(DependencyRegistry):
+        def resolve(self, t: Type[Any]) -> Any:  # type: ignore
+            ...
+
+        def is_registered(self, t: Type[Any]) -> bool:  # type: ignore
+            ...
+
+        def register_instance(self, t: Type[Any], instance: Any) -> DependencyRegistry:  # type: ignore
+            ...
+
+        def register_singleton(self, t: Type[Any], target: Optional[Target[Any]] = None) -> DependencyRegistry:  # type: ignore
+            ...
+
+        def register_transient(self, t: Type[Any], target: Optional[Target[Any]] = None) -> DependencyRegistry:  # type: ignore
+            ...
+
+    c = Container()
+    fake = FakeRegistry()
+    c.register_instance(DependencyResolver, fake)
+
+    result: DependencyResolver = c.resolve(DependencyResolver)  # type: ignore[arg-type]
+    assert result is fake, 'Explicit instance registration should take precedence'
+
+
+# ── self_resolve=False tests ────────────────────────────────────────────────────
+
+
+@fact
+def resolve_interface_fails_when_self_resolve_false() -> None:
+    """Resolving for a DI interface raises ResolutionError when self_resolve is disabled."""
+
+    c = Container(self_resolve=False)
+
+    assert raises[ResolutionError](lambda: c.resolve(DependencyRegistry))  # type: ignore[arg-type]
+    assert raises[ResolutionError](lambda: c.resolve(DependencyResolver))  # type: ignore[arg-type]
+    assert raises[ResolutionError](lambda: c.resolve(ScopedDependencyResolver))  # type: ignore[arg-type]
+
+
+@fact
+def explicit_registration_overrides_self_resolve_false() -> None:
+    """An explicit registration for a DI interface still resolves even when self_resolve=False."""
+
+    class FakeRegistry(DependencyRegistry):
+        def resolve(self, t: Type[Any]) -> Any: ...  # type: ignore
+        def is_registered(self, t: Type[Any]) -> bool: ...  # type: ignore
+        def register_instance(self, t: Type[Any], instance: Any) -> DependencyRegistry: ...  # type: ignore
+        def register_singleton(self, t: Type[Any], target: Optional[Target[Any]] = None) -> DependencyRegistry: ...  # type: ignore
+        def register_transient(self, t: Type[Any], target: Optional[Target[Any]] = None) -> DependencyRegistry: ...  # type: ignore
+
+    c = Container(self_resolve=False)
+    fake = FakeRegistry()
+    c.register_instance(DependencyResolver, fake)
+
+    result: DependencyResolver = c.resolve(DependencyResolver)  # type: ignore[arg-type]
+    assert result is fake
+
+
+@fact
+def normal_resolves_unaffected_by_self_resolve_false() -> None:
+    """Non-DI resolves continue to work normally when self_resolve=False."""
+
+    class Foo:
+        def bar(self) -> int:
+            return 42
+
+    c = Container(self_resolve=False)
+    c.register_transient(Foo)
+
+    obj = c.resolve(Foo)
+    assert isinstance(obj, Foo)
+    assert obj.bar() == 42
+
+    assert raises[ResolutionError](
+        lambda: c.resolve(DependencyResolver),  # type: ignore[arg-type]
+        exact=True,
+    )
+
+
+@fact
+def resolve_all_three_interfaces_fail_when_self_resolve_false() -> None:
+    """All three interface types fail with self_resolve=False."""
+
+    c = Container(self_resolve=False)
+
+    for iface in (DependencyRegistry, DependencyResolver, ScopedDependencyResolver):  # type: ignore[arg-type]
+        assert raises[ResolutionError](
+            lambda i=iface: c.resolve(i),  # type: ignore[misc]
+            exact=True,
+        )

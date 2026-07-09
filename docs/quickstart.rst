@@ -168,6 +168,59 @@ This is intentional. The second positional argument on any ``register_*`` method
 
 +-----------------------------------------------+------------------------+-------------------------------------+
 
+Self-Resolve
+~~~~~~~~~~~~
+
+By default, hazrakah lets a :py:class:`hazrakah.Container` resolve **itself** when asked for one of its own interface types — :py:class:`~hazrakah.DependencyRegistry`, :py:class:`~hazrakah.DependencyResolver`, or :py:class:`~hazrakah.ScopedDependencyResolver` — even if nothing is explicitly registered. This makes the container conveniently available as a dependency without manual registration:
+
+.. code-block:: python
+
+    from hazrakah import Container, DependencyResolver
+
+    class MyService:
+        def __init__(self, resolver: DependencyResolver) -> None:
+            self.resolver = resolver   # the container is injected automatically
+
+    c = Container()
+    service = c.resolve(MyService)
+    assert service.resolver is c     # same container instance
+
+
+You can **disable** this behaviour by passing ``self_resolve=False`` to the constructor. With self-resolve disabled, resolving for a DI interface behaves exactly like any other unregistered type — it raises :py:class:`~hazrakah.ResolutionError` unless you provide an explicit registration:
+
+.. code-block:: python
+
+    from hazrakah import Container, DependencyResolver, ResolutionError
+
+    c = Container(self_resolve=False)
+
+    # Raises ResolutionError -- no explicit registration for DependencyResolver
+    try:
+        c.resolve(DependencyResolver)  # type: ignore[arg-type]
+    except ResolutionError:
+        pass   # expected
+
+
+If you need a custom ``DependencyResolver`` (or any of the other interfaces), register it explicitly — explicit registrations take precedence regardless of the ``self_resolve`` setting:
+
+.. code-block:: python
+
+    from hazrakah import Container, DependencyResolver
+
+    class MyCustomResolver(DependencyRegistry):
+        def resolve(self, t) -> Any: ...
+        def is_registered(self, t) -> bool: ...
+        def register_instance(self, t, instance): ...
+        def register_singleton(self, t, target=None): ...
+        def register_transient(self, t, target=None): ...
+
+    custom = MyCustomResolver()
+    c = Container(self_resolve=False)
+    c.register_instance(DependencyResolver, custom)   # type: ignore[arg-type]
+
+    resolved = c.resolve(DependencyResolver)  # type: ignore[arg-type]
+    assert resolved is custom                 # explicit registration wins
+
 Caching with ``Cached[T]``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
