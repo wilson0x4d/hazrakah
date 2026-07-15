@@ -16,4 +16,5 @@ sed "s/0abc123/$(git rev-parse --short HEAD)/g" --in-place src/hazrakah/__init__
 rm -rf build/
 rm -rf dist/
 rm -rf src/*.egg-info/
+cp SKILL.md src/hazrakah/
 python3 -m build

@@ -33,4 +33,4 @@ Homepage = "https://github.com/wilson0x4d/hazrakah"
 Repository = "https://github.com/wilson0x4d/hazrakah.git"
 
 [tool.setuptools.package-data]
-"hazrakah" = ["py.typed"]
+"hazrakah" = ["py.typed", "SKILL.md"]
