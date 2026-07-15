@@ -1,0 +1,41 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: © 2026 Shaun Wilson
+# SPDX-License-Identifier: MIT
+##
+#
+# this script exists for Developers
+#
+# run `init-skill` to populate a skill into `$HOME/.opencode/skills` and `$HOME/.claude/skills`
+#
+# the skill is symlinked from the `./SKILL.md` in this workspace, so updating the repo will update the skill definition.
+#
+##
+set -euo pipefail
+
+SCRIPT_DIR=$(dirname $(realpath "${BASH_SOURCE[0]}"))
+echo "SCRIPT_DIR: $SCRIPT_DIR"
+
+WORKSPACE_NAME=$(basename `dirname "$SCRIPT_DIR"`)
+echo "WORKSPACE_NAME: $WORKSPACE_NAME"
+
+SKILL_SRC="$SCRIPT_DIR/../SKILL.md"
+if [ ! -f "$SKILL_SRC" ]; then
+    echo "⛔ skill source not found at: $SKILL_SRC" >&2
+    exit 1
+fi
+echo "SKILL_SRC: $SKILL_SRC"
+
+for DEST_DIR in "$HOME/.opencode/skills/$WORKSPACE_NAME" "$HOME/.claude/skills/$WORKSPACE_NAME"; do
+    if [ ! -d "$(dirname $DEST_DIR)" ]; then
+        echo "⏭ SKIPPED (directory not found): $(dirname $DEST_DIR)"
+        continue
+    fi
+
+    mkdir -p $DEST_DIR
+    DEST_FILE="$DEST_DIR/SKILL.md"
+
+    rm -f "$DEST_FILE"
+    ln -sf "$(realpath "$SKILL_SRC")" "$DEST_FILE"
+    echo "✅ LINKED: $DEST_FILE"
+    echo ""
+done
