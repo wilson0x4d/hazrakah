@@ -1,261 +1,388 @@
 ---
 name: hazrakah
-description: Dependency Injection skill for Python. MUST when the user discusses "DI", "dependency injection" or "hazrakah".
-user-invocable: true
+description: Zero-dependency dependency injection framework for Python 3.11+ — Container lifecycle, registration, resolution, scopes, decorators, teardown, Cached[T], and error handling. Use as a technical reference document for hazrakah API and concepts.
+user-invocable: false
 disable-model-invocation: false
+type: reference
 ---
 
-`hazrakah` is a tiny but powerful zero-dependency DI container for Python 3.11+ with lifetime management, hierarchical scopes, decorator-based registration, and fluent chaining.
+# hazrakah — DI Library Reference
 
-- **Install:** `python3 -m pip install hazrakah`
-- **Docs:** https://hazrakah.readthedocs.io/
-- **Source:** https://github.com/wilson0x4d/hazrakah
+**hazrakah** — a zero-dependency dependency injection framework for Python 3.11+.
 
-## Container Setup
+---
 
-All public symbols are imported directly from `hazrakah`:
+## Table of Contents
+
+1. [What is `Container`](#what-is-container)
+2. [Lifetimes](#lifetimes)
+3. [Registration](#registration)
+4. [Resolution](#resolution)
+5. [Scopes](#scopes)
+6. [Decorators](#decorators)
+7. [Context Manager / Teardown](#context-manager--teardown)
+8. [Time-Bound Caching with `Cached[T]`](#time-bound-caching-with-cachedt)
+9. [Error Handling](#error-handling)
+10. [Complete Example](#complete-example)
+
+---
+
+## What is `Container`
+
+A single class that combines registration, resolution, and scoping in one mixin:
 
 ```python
-from hazrakah import (
-    Container, provides, singleton, transient, instanced,
-    Factory, Target, Lifetime, RegistrationError,
-)
+from hazrakah import Container
+
+c = Container()
 ```
 
-### Creating a container
+### Constructor parameters
 
-The simplest setup uses fluent chaining — every `register_*` method returns `self`:
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `outer_scope` | `Optional[Container]` | `None` | Parent container for hierarchical scoping |
+| `frozen` | `bool` | `False` | Block all registrations immediately |
+| `self_resolve` | `bool` | `True` | Allow a container to resolve its own DI interfaces to itself |
+
+---
+
+## Lifetimes
+
+Three lifetime modes controlling how many instances exist:
+
+| Lifetime | Behaviour |
+|---|---|
+| `TRANSIENT` | New instance every `resolve()` call |
+| `SINGLETON` | One instance per owning container; parent singletons cascade to children |
+| `INSTANCE` | One shared pre-existing object returned everywhere |
+
+---
+
+## Registration
+
+All methods return `self` for fluent chaining.
+
+### `register_transient(t: Type, target: Optional[Target] = None)`
 
 ```python
-container = (
-    Container()
-    .register_singleton(IDatabase, lambda c: DatabasePool("postgres://localhost/mydb"))
-    .register_transient(Logger, ConsoleLogger)
-    .register_instance(IConfig, Config.load_from_env())
-)
-service = container.resolve(IService)
+from typing import Protocol
+
+class IFoo(Protocol): ...
+
+# Concrete class as implementation
+c.register_transient(IFoo, FooImpl)
+
+# Factory function (receives the resolver)
+c.register_transient(IFoo, lambda r: FooImpl(r.resolve(Config)))
+
+# Self-registration (no target — container auto-wires constructor deps)
+c.register_transient(FooImpl)
 ```
 
-### Context manager auto-teardown
-
-Use a context manager for deterministic cleanup of resolved instances (calls `close()` on each):
+### `register_singleton(t: Type, target: Optional[Target] = None)`
 
 ```python
+# With explicit interface and class
+c.register_singleton(IFoo, FooImpl)
+
+# With factory
+c.register_singleton(IFoo, lambda r: FooImpl())
+
+# Self-registration
+c.register_singleton(FooImpl)
+```
+
+### `register_instance(t: Type, instance: Any = None)`
+
+```python
+# Explicit instance — exact object returned everywhere
+config = MyConfig()
+c.register_instance(IConfig, config)
+
+# Inferred instance — container creates it, then returns the same object
+c.register_instance(MyService)  # no explicit instance arg
+```
+
+### `freeze()`
+
+```python
+c.freeze()
+c.register_transient(IFoo, Foo)  # → RegistrationError
+```
+
+### `is_registered(t: Type) -> bool`
+
+```python
+c.register_transient(IFoo, Foo)
+assert c.is_registered(IFoo)  # True
+c.is_registered(IBar)         # False (not registered at all)
+
+# Inherited resolution visible even in children
+child = c.create_scope()
+child.is_registered(IFoo)  # True (parent's registration)
+```
+
+---
+
+## Resolution
+
+### `resolve(t: Type[T]) -> T`
+
+```python
+# Basic resolution
+foo = c.resolve(IFoo)
+
+# Auto-wired constructor dependencies
+class Service:
+    def __init__(self, db: Database, logger: ILogger) -> None: ...
+
+svc = c.resolve(Service)  # Database & ILogger are auto-resolved if registered
+
+# Optional resolution — returns None when unregistered
+class OptService:
+    def __init__(self, foo: Optional[IFoo] = None) -> None: ...
+
+svc = c.resolve(OptService)  # .foo is None if IFoo has no registration
+
+# Union type resolution — matches single registration
+x = c.resolve(IFoo | IBar)  # IFoo and IBar resolve to the same singleton
+```
+
+Resolution walks the container hierarchy (self → parent → grandparent …).
+
+---
+
+## Scopes
+
+Create hierarchical child containers:
+
+```python
+parent = Container()
+child = parent.create_scope()
+
+# Children inherit parent registrations
+parent.register_singleton(IFoo, Foo)
+child.resolve(IFoo)  → same instance as parent.resolve(IFoo)
+
+# Children can shadow with their own registrations
+child.register_singleton(IFoo, ChildFoo)
+# child.resolve(IFoo) now resolves to ChildFoo
+# parent.resolve(IFoo) still resolves to Foo
+```
+
+Scoped containers support RAII via context manager:
+
+```python
+with parent.create_scope() as scope:
+    scope.register_transient(IBar, Bar)
+    obj = scope.resolve(IBar)
+# obj.close() called on exit if IBartype has .close()
+```
+
+---
+
+## Decorators
+
+Decorators are **passive** — they store metadata. Registration happens via `register_decorated()`.
+
+### Core decorators: `@singleton`, `@transient`, `@instanced`
+
+```python
+from hazrakah import singleton, transient, instanced
+
+@singleton(types=IFoo)
+class FooImpl:
+    def __init__(self, db: Database) -> None:
+        self.db = db
+
+@transient(types=ILogger)
+class LoggerImpl: ...
+
+@instanced
+class BootStamp:  # self-referencing
+    ...
+```
+
+#### Factory functions
+
+```python
+@singleton(types=ISession)
+def make_session(r: DependencyResolver) -> Session:
+    return Session(connection_string=r.resolve(str))
+```
+
+#### Usage patterns
+
+```python
+@singleton                           # class auto-ref
+@singleton()                          # same
+@singleton(types=IFoo)                # explicit interface
+@singleton(types=(IFoo, IBar))        # multiple interfaces
+@singleton(types=IFoo, depends_on=(IBar,))  # ordering hint
+```
+
+### `register_decorated()`
+
+Registers all decorated classes/functions in the global namespace:
+
+```python
+c.register_decorated()  # registers everything decorated
+
+# Filter by module namespace
+c.register_decorated(namespace_pattern=r"myapp\.services\..*")
+
+# Filter by class name
+c.register_decorated(class_pattern="^Service$")
+
+# Topological ordering via depends_on ensures deps registered first
+@singleton(types=ILogger, depends_on=(IConfig,))
+class MyLogger: ...
+```
+
+### `@provides(*interfaces)`
+
+Multi-registration without lifecycle decorators. A single instance is registered under the class name **and** under all provided interfaces:
+
+```python
+from hazrakah import provides
+
+@provides(IFoo, IBar)
+class Impl:
+    def foo_method(self): ...
+    def bar_method(self): ...
+
+c.register_singleton(Impl)
+
+a = c.resolve(IFoo)
+b = c.resolve(IBar)
+assert a is b  # same instance
+```
+
+**Note**: `@provides` is bypassed when a second argument is supplied: `register_singleton(IFoo, Impl)` does NOT use `@provides`. Mutually exclusive with lifecycle decorators (`@singleton`, `@transient`, `@instanced`).
+
+---
+
+## Context Manager / Teardown
+
+Containers implement RAII — tracked instances are closed automatically:
+
+```python
+from hazrakah import Container
+
 class Closeable:
     def __init__(self) -> None: self.closed = False
     def close(self) -> None: self.closed = True
 
 with Container() as c:
     c.register_transient(Closeable)
-    svc = c.resolve(Closeable)
+    obj = c.resolve(Closeable)
 
-assert svc.closed  # teardown ran automatically on __exit__
+assert obj.closed  # True — .close() called on __exit__
 ```
 
-Explicit instances passed to `register_instance` are **not** tracked for cleanup. (Inferred instances — e.g., `register_instance(SomeClass)` without an explicit object — may be tracked via the resolution path.)
+Behaviour:
+- Any object created through the container via resolution is tracked.
+- Objects injected into other tracked objects are **not** tracked (only root-level resolution-created objects).
+- `__del__` provides a garbage-collection fallback for `close()`.
 
-## Lifetimes
+---
 
-| Lifetime | Behavior | Best For |
-| :--- | :--- | :--- |
-| `SINGLETON` | One cached instance per registration, shared by any container that resolves through it | Services with state, connection pools |
-| `TRANSIENT` | New instance on every `resolve()` | Stateless helpers, per-request objects |
-| `INSTANCE` | Pre-bound object always returned by reference | Configuration, externally-managed resources |
+## Time-Bound Caching with `Cached[T]`
 
-```python
-# SINGLETON — cached in the registration's owner
-container.register_singleton(IDB, DatabasePool)
-x = container.resolve(IDB)
-y = container.resolve(IDB)
-assert x is y  # same cached instance in this scope
-
-# TRANSIENT — new each time
-container.register_transient(ILogger, ConsoleLogger)
-assert container.resolve(ILogger) is not container.resolve(ILogger)
-
-# INSTANCE — your exact object
-config = Config()
-container.register_instance(IConfig, config)
-assert container.resolve(IConfig) is config
-```
-
-## Scopes & Hierarchy
-
-Scopes isolate registration: parent registrations flow down; child-only registrations stay local.
-
-### Basic scoping
+Generic wrapper providing TTL-based caching around a factory:
 
 ```python
-parent = Container()
-child = parent.create_scope()
+from hazrakah import Cached
+from datetime import timedelta
 
-parent.register_singleton(IRepository, SqlRepository)
-child.resolve(IRepository)  # resolves parent's singleton
-```
-
-### Child overrides
-
-```python
-child.register_transient(IRepository, InMemoryRepository)
-# child now gets its own implementation; parent still sees SqlRepository
-```
-
-### Nested scopes with auto-teardown
-
-```python
-root = Container()
-with root.create_scope() as scope1:
-    scope1.register_transient(ISession, Session)
-    with scope1.create_scope() as scope2:
-        session = scope2.resolve(ISession)  # found in parent scope1
-# ISession.close() called for scope2, then scope1 on exit
-```
-
-### Frozen mode
-
-Prevent further registration after composition is complete:
-
-```python
-container = Container()
-(
-    container
-    .register_transient(FileLogger)
-    .register_singleton(IDatabase, DatabasePool)
+cache = Cached(
+    lambda r: ExpensiveSource(),
+    ttl=timedelta(seconds=47)
 )
-container.freeze()  # no more registrations allowed on this container or its descendant scopes
 
+result1 = cache(resolver)   # factory invoked
+result2 = cache(resolver)   # cached value returned
+assert result1 is result2
+
+cache.reset()               # manually invalidate
+
+# ttl=0 → factory called every time (always miss)
+```
+
+Methods:
+- `cached(resolver)` → resolved value (reinvokes factory on TTL expiry)
+- `cache.reset()` → invalidate cache
+- `cache.ttl` → read-only `timedelta`
+
+---
+
+## Error Handling
+
+```python
+from hazrakah import RegistrationError, ResolutionError
+
+# RegistrationError — raised when registration fails
 try:
-    container.register_transient(ISomeService, SomeService)
-except RegistrationError:  # blocked by frozen state
-    ...
+    frozen_container.register_transient(IFoo, Foo)
+except RegistrationError:
+    pass
+
+# ResolutionError — raised when a type cannot be resolved
+try:
+    container.resolve(UnregisteredProtocol)
+except ResolutionError:
+    pass
 ```
 
-## Decorators
+| Error | Cause |
+|---|---|
+| `RegistrationError` | Frozen container, invalid factory signature, mixing `@provides` with lifecycle decorators, missing `types=` on factory decorator |
+| `ResolutionError` | Unregistered abstract/protocol type, multiple distinct targets in a non-optional union, zero-match union |
 
-Mark intent at class-definition time; register everything in one call:
+---
 
-```python
-from hazrakah import Container, singleton, transient, instanced
-
-@singleton(types=ICache)
-class RedisCache:
-    def __init__(self, host: str = "localhost") -> None: ...
-
-@transient(types=IEmailSender)
-class SMTPSender:
-    def __init__(self, cache: ICache) -> None: ...  # resolved automatically
-
-@instanced(types=IBootStamp)
-class BootTime: ...  # registered as INSTANCE (created when register_decorated() is called)
-
-c = Container()
-c.register_decorated()  # discovers all decorated classes above
-```
-
-### Multiple interfaces
-
-Register one class under several keys — all resolve to the same instance:
+## Complete Example
 
 ```python
-@singleton(types=(IFoo, IBar))
-class Widget: ...
-
-assert c.resolve(IFoo) is c.resolve(IBar)
-```
-
-### Factory functions
-
-Lifecycle decorators work with callables too (requires `types=`):
-
-```python
-@singleton(types=ISession)
-def make_session(resolver: DependencyResolver) -> Session:
-    return Session(connection_string=os.environ["DB_URL"])
-```
-
-### depends_on ordering
-
-Hint registration order so that dependencies are available first:
-
-```python
-@singleton(types=IConfig)
-class ConfigService: ...
-
-@singleton(types=ILogger, depends_on=(IConfig,))
-class Logger: ...
-# ConfigService is registered before Logger
-```
-
-Auto-inference of `depends_on` from constructor parameter annotations is also supported (via decorator form only).
-
-## The @provides Marker
-
-Declare which interfaces a class implements — registration binds to **all** of them simultaneously. Unlike lifecycle decorators, `@provides` is a pure marker (zero registration logic at decoration time):
-
-```python
-class IFoo(Protocol):
-    def foo(self) -> None: ...
-
-class IBar(Protocol):
-    def bar(self) -> str: ...
-
-@provides(IFoo, IBar)
-class MultiImpl:
-    def foo(self) -> None: ...
-    def bar(self) -> str: return "bar"
-
-container = Container()
-container.register_singleton(MultiImpl)  # also under IFoo and IBar
-
-a = container.resolve(IFoo)
-b = container.resolve(IBar)
-assert a is b  # same instance — shared cache across all provided interfaces
-```
-
-**Important:** `@provides` and lifecycle decorators (`@singleton`, `@transient`, `@instanced`) are mutually exclusive on the same class. Use one approach or the other.
-
-## Common Patterns
-
-### Composition root — lock down config before app startup
-
-```python
-@provides(IConfig, ILogger)
-class AppConfig:
-    def __init__(self) -> None: ...
-
-container = (
-    Container()
-    .register_instance(AppConfig())   # auto-registers under IConfig + ILogger
-    .register_transient(ISerializer, JsonSerializer)
-    .register_singleton(IDatabase, DatabasePool)
-    .freeze()
+from typing import Protocol
+from hazrakah import (
+    Container, provides, singleton, transient, instanced,
 )
+
+# ---- Interfaces & implementations ----
+
+class IDatabase(Protocol):
+    def exec(self, sql: str) -> list[dict]: ...
+
+class ILogger(Protocol):
+    def log(self, msg: str) -> None: ...
+
+@singleton(types=IDatabase)
+class PostgresPool:
+    def exec(self, sql: str) -> list[dict]: return []
+
+@transient(types=ILogger)
+class ConsoleLogger:
+    def log(self, msg: str) -> None: print(msg)
+
+@provides(IDatabase, ILogger)
+class CombinedImpl:
+    def exec(self, sql: str) -> list[dict]: return []
+    def log(self, msg: str) -> None: pass
+
+# ---- Composition root ----
+
+with (
+    Container()
+    .register_decorator(CombinedImpl)  # registers both IDatabase & ILogger
+    .register_transient(ConsoleLogger)
+    .freeze()
+) as container:
+    class UserService:
+        def __init__(self, db: IDatabase, logger: ILogger) -> None:
+            self.db = db
+            self.logger = logger
+
+    svc = container.resolve(UserService)
 ```
-
-### Scoped request handling
-
-```python
-parent = Container()  # app-wide singletons
-parent.register_singleton(IUserStore, SqlUserStore)
-
-def handle_request():
-    with parent.create_scope() as scope:
-        scope.register_transient(ILogger, RequestLogger)
-        store = scope.resolve(IUserStore)   # singleton from parent
-        logger = scope.resolve(ILogger)      # transient within this request
-        return process(store, logger)
-# RequestLogger.close() called after each request; store stays alive
-```
-
-## Troubleshooting
-
-| Problem | Cause / Fix |
-| :--- | :--- |
-| `KeyError` resolving a type | Unregistered type — register it with the container. |
-| Singleton unexpectedly different instances | Each singleton is cached by the container that **owns its registration**. A child registering a new singleton for an interface shadows the parent's registration (different instances, each cached in its own owner). Both scopes share the same instance only when they resolve through the same registration. |
-| `RegistrationError` applying lifecycle decorator to `@provides` class | The two are mutually exclusive — use one pattern per class |
-| `RegistrationError` after calling `freeze()` | Freeze blocks further registration in the entire hierarchy — call it only after all registrations complete |
-| Objects not cleaned up on context exit | Only objects created through resolution paths are tracked. User-owned instances passed explicitly to `register_instance` are untouched. (Inferred `register_instance(SomeClass)` may add tracking via the transient auto-registration path.) |
-| Dependencies auto-resolved incorrectly | Constructor parameters must be annotated (`def __init__(self, foo: IFoo)`); unannotated params won't be wired |
-| `@singleton` class resolves as transient after `register_decorated()` | Decorators store metadata only; registration happens at `register_decorated()`. If the container is not used to call it (or if the decorated class is in a different module), nothing gets registered |
-| `patch` target not found (`AttributeError`) | Verify the dotted path resolves — e.g. `"myapp.database.connect"` requires `from myapp import database` already imported |
