@@ -1,7 +1,7 @@
 ---
 name: hazrakah
 description: Zero-dependency dependency injection framework for Python 3.11+ — Container lifecycle, registration, resolution, scopes, decorators, teardown, Cached[T], and error handling. Use as a technical reference document for hazrakah API and concepts.
-user-invocable: false
+user-invocable: true
 disable-model-invocation: false
 type: reference
 ---
