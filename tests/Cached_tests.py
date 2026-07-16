@@ -10,12 +10,12 @@ project.
 
 from __future__ import annotations
 
-import time
+import asyncio
 from datetime import timedelta
-
 from hazrakah import Cached, DependencyResolver
 from punit import fact
 from punit.mocks import Mock
+import time
 
 
 class _ExpensiveResult:
@@ -287,16 +287,18 @@ def timedelta_with_microseconds_preserved() -> None:
 
 
 @fact
-def timedelta_ttl_zero_expires_immediately() -> None:
+async def timedelta_ttl_zero_expires_immediately() -> None:
     """Zero-duration timedelta expires immediately."""
     call_count = 0
 
-    def factory(c):  # noqa: ANN201, ARG001
+    def factory(_c):  # noqa: ANN201, ARG001
         nonlocal call_count
         call_count += 1
         return call_count
 
     cached = Cached(factory, ttl=timedelta(0))  # type: ignore[arg-type]
-    _ = cached(_resolver_mock)  # type: ignore[arg-type]
-    _ = cached(_resolver_mock)  # type: ignore[arg-type]
+    a = cached(_resolver_mock)  # type: ignore[arg-type]
+    await asyncio.sleep(2)
+    b = cached(_resolver_mock)  # type: ignore[arg-type]
+    assert a is not b
     assert call_count == 2
