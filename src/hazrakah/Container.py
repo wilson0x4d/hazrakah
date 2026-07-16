@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from abc import ABC
+from dataclasses import MISSING, fields
 from enum import IntEnum
 import inspect
 import re
@@ -183,6 +184,22 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
                     return getattr(mod, annotation)
         return annotation
 
+    @staticmethod
+    def __is_intrinsic_type(t: Any) -> bool:
+        """
+        Return ``True`` if *t* is a builtin/intrinsic type (e.g. str, int, float).
+
+        Excludes ``object`` and user-defined classes.
+        """
+        origin = get_origin(t) if not isinstance(t, _SpecialForm) else t
+        actual = origin if origin is not None else t
+        if not isinstance(actual, type):
+            return False
+        if actual is object:
+            return False
+        module = getattr(actual, '__module__', None)
+        return module == 'builtins'
+
     def __check_frozen(self, t: Type[T] | object) -> None:
         """
         Checks if the container is frozen, if frozen blocks registration by raising ``RegistrationError``.
@@ -273,6 +290,17 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         ctor = t.__init__
         sig = inspect.signature(ctor)
         kwargs: dict[str, Any] = {}
+
+        # Dataclass: build field default lookup
+        is_dataclass_type = hasattr(t, '__dataclass_fields__')
+        field_defaults: dict[str, Any] = {}
+        if is_dataclass_type:
+            for f in fields(t):  # type: ignore[arg-type]
+                if f.default is not MISSING:
+                    field_defaults[f.name] = f.default
+                elif f.default_factory is not MISSING:
+                    field_defaults[f.name] = f.default_factory()
+
         for name, param in list(sig.parameters.items())[1:]:
             if param.annotation is inspect.Parameter.empty:
                 raise TypeError(
@@ -280,7 +308,25 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
                     'missing type annotation.'
                 )
             dep_type = self.__unwrap_forward_ref(param.annotation, t)
-            kwargs[name] = self.resolve(dep_type)
+
+            try:
+                # Dataclass: check field default first (overrides intrinsic type resolution)
+                if is_dataclass_type and name in field_defaults:
+                    kwargs[name] = field_defaults[name]
+                # Non-dataclass: only skip resolution for intrinsic types with non-None defaults
+                elif (not is_dataclass_type
+                      and param.default is not inspect.Parameter.empty
+                      and param.default is not None
+                      and self.__is_intrinsic_type(dep_type)):
+                    kwargs[name] = param.default
+                else:
+                    kwargs[name] = self.resolve(dep_type)
+            except ResolutionError:
+                # Fallback: use param.default if resolution failed
+                if param.default is not inspect.Parameter.empty:
+                    kwargs[name] = param.default
+                else:
+                    raise
         return t(**kwargs)
 
     def __get_registration(self, t: Type[Any]) -> tuple[Registration, Container] | tuple[None, None]:
