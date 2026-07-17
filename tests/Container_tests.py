@@ -174,7 +174,7 @@ def nonexistent_registration_when_protocol_must_fail() -> None:
     container: Container = Container()
 
     assert raises[ResolutionError](
-        lambda: container.resolve(ProtocolDroid),
+        lambda: container.resolve(ProtocolDroid),  # type: ignore[type-abstract]
         exact=True
     ), 'Expected ResolutionError for an unknown registration of a Protocol type.'
 
@@ -211,7 +211,7 @@ def proto_subclass_no_init_must_resolve() -> None:
 
     container = Container()
     container.register_transient(PSNIMR, PSNI)
-    obj = container.resolve(PSNIMR)
+    obj = container.resolve(PSNIMR)  # type: ignore[type-abstract]
     assert obj is not None
 
 
@@ -317,19 +317,19 @@ def test_hierarchical_singletons() -> None:
 
     # Register singleton in parent
     parent.register_singleton(IFoo, Foo)
-    # Resolve from both parent and child – should be the same instance
-    foo_parent = parent.resolve(IFoo)
-    foo_child = child.resolve(IFoo)
+    # Resolve from both parent and child - should be the same instance
+    foo_parent = parent.resolve(IFoo)  # type: ignore[type-abstract]
+    foo_child = child.resolve(IFoo)  # type: ignore[type-abstract]
     assert foo_parent is foo_child, 'Singleton from parent should be shared across child scopes'
 
     # Register a different singleton in child
     child.register_singleton(IBar, Bar)
-    bar_child_first = child.resolve(IBar)
-    bar_child_second = child.resolve(IBar)
+    bar_child_first = child.resolve(IBar)  # type: ignore[type-abstract]
+    bar_child_second = child.resolve(IBar)  # type: ignore[type-abstract]
     assert bar_child_first is bar_child_second, 'Singleton in child should be cached within child'
     # Parent should not resolve IBar
     try:
-        parent.resolve(IBar)
+        parent.resolve(IBar)  # type: ignore[type-abstract]
     except ResolutionError:
         pass
     else:
@@ -770,10 +770,10 @@ def chained_registrations_all_resolve() -> None:
      .register_singleton(IBar, Bar)
      .register_instance(IService, iservice_instance))
 
-    resolved_ifoo: IFoo = container.resolve(IFoo)
+    resolved_ifoo: IFoo = container.resolve(IFoo)  # type: ignore[type-abstract]
     assert isinstance(resolved_ifoo, Foo), 'transient registration should resolve via chain'
 
-    resolved_ibar: IBar = container.resolve(IBar)
+    resolved_ibar: IBar = container.resolve(IBar)  # type: ignore[type-abstract]
     assert isinstance(resolved_ibar, Bar), 'singleton registration should resolve via chain'
 
     resolved_iservice: IService = container.resolve(IService)
@@ -810,8 +810,8 @@ def mixed_chain_across_scopes_shares_singletons() -> None:
      .register_singleton(IFoo, Foo)
      .register_transient(IService, ServiceA))
 
-    parent_foo: IFoo = parent.resolve(IFoo)
-    child_foo: IFoo = child.resolve(IFoo)
+    parent_foo: IFoo = parent.resolve(IFoo)  # type: ignore[type-abstract]
+    child_foo: IFoo = child.resolve(IFoo)  # type: ignore[type-abstract]
     assert parent_foo is child_foo, 'Singleton from parent should be shared across scopes via chain'
 
 
@@ -832,7 +832,7 @@ def resolve_dependency_registry_returns_self() -> None:
     """"Resolving for ``DependencyRegistry`` returns the container itself."""
 
     c1: Container = Container()
-    result: DependencyRegistry = c1.resolve(DependencyRegistry)  # type: ignore[arg-type]
+    result: DependencyRegistry = c1.resolve(DependencyRegistry)  # type: ignore[arg-type, type-abstract]
     assert result is c1, 'resolve(DependencyRegistry) should return self'
 
 
@@ -841,7 +841,7 @@ def resolve_dependency_resolver_returns_self() -> None:
     """Resolving for ``DependencyResolver`` returns the container itself."""
 
     c1: Container = Container()
-    result: DependencyResolver = c1.resolve(DependencyResolver)  # type: ignore[arg-type]
+    result: DependencyResolver = c1.resolve(DependencyResolver)  # type: ignore[arg-type, type-abstract]
     assert result is c1, 'resolve(DependencyResolver) should return self'
 
 
@@ -850,7 +850,7 @@ def resolve_scoped_dependency_resolver_returns_self() -> None:
     """Resolving for ``ScopedDependencyResolver`` returns the container itself."""
 
     c1: Container = Container()
-    result: ScopedDependencyResolver = c1.resolve(ScopedDependencyResolver)  # type: ignore[arg-type]
+    result: ScopedDependencyResolver = c1.resolve(ScopedDependencyResolver)  # type: ignore[arg-type, type-abstract]
     assert result is c1, 'resolve(ScopedDependencyResolver) should return self'
 
 
@@ -860,11 +860,11 @@ def resolve_interface_types_are_idempotent() -> None:
 
     c = Container()
 
-    r1: DependencyRegistry = c.resolve(DependencyRegistry)  # type: ignore[arg-type]
-    r2: DependencyRegistry = c.resolve(DependencyRegistry)  # type: ignore[arg-type]
+    r1: DependencyRegistry = c.resolve(DependencyRegistry)  # type: ignore[arg-type, type-abstract]
+    r2: DependencyRegistry = c.resolve(DependencyRegistry)  # type: ignore[arg-type, type-abstract]
     assert r1 is r2, 'Should return the same object on every resolve'
 
-    r3: DependencyResolver = c.resolve(DependencyResolver)  # type: ignore[arg-type]
+    r3: DependencyResolver = c.resolve(DependencyResolver)  # type: ignore[arg-type, type-abstract]
     assert r1 is r3
 
 
@@ -947,7 +947,7 @@ def resolve_interface_type_with_explicit_instance_registration() -> None:
     fake = FakeRegistry()
     c.register_instance(DependencyResolver, fake)
 
-    result: DependencyResolver = c.resolve(DependencyResolver)  # type: ignore[arg-type]
+    result: DependencyResolver = c.resolve(DependencyResolver)  # type: ignore[arg-type, type-abstract]
     assert result is fake, 'Explicit instance registration should take precedence'
 
 
@@ -960,9 +960,9 @@ def resolve_interface_fails_when_self_resolve_false() -> None:
 
     c = Container(self_resolve=False)
 
-    assert raises[ResolutionError](lambda: c.resolve(DependencyRegistry))  # type: ignore[arg-type]
-    assert raises[ResolutionError](lambda: c.resolve(DependencyResolver))  # type: ignore[arg-type]
-    assert raises[ResolutionError](lambda: c.resolve(ScopedDependencyResolver))  # type: ignore[arg-type]
+    assert raises[ResolutionError](lambda: c.resolve(DependencyRegistry))  # type: ignore[arg-type, type-abstract]
+    assert raises[ResolutionError](lambda: c.resolve(DependencyResolver))  # type: ignore[arg-type, type-abstract]
+    assert raises[ResolutionError](lambda: c.resolve(ScopedDependencyResolver))  # type: ignore[arg-type, type-abstract]
 
 
 @fact
@@ -980,7 +980,7 @@ def explicit_registration_overrides_self_resolve_false() -> None:
     fake = FakeRegistry()
     c.register_instance(DependencyResolver, fake)
 
-    result: DependencyResolver = c.resolve(DependencyResolver)  # type: ignore[arg-type]
+    result: DependencyResolver = c.resolve(DependencyResolver)  # type: ignore[arg-type, type-abstract]
     assert result is fake
 
 
@@ -1000,7 +1000,7 @@ def normal_resolves_unaffected_by_self_resolve_false() -> None:
     assert obj.bar() == 42
 
     assert raises[ResolutionError](
-        lambda: c.resolve(DependencyResolver),  # type: ignore[arg-type]
+        lambda: c.resolve(DependencyResolver),  # type: ignore[arg-type, type-abstract]
         exact=True,
     )
 

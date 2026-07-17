@@ -19,11 +19,12 @@ type: reference
 3. [Registration](#registration)
 4. [Resolution](#resolution)
 5. [Scopes](#scopes)
-6. [Decorators](#decorators)
-7. [Context Manager / Teardown](#context-manager--teardown)
-8. [Time-Bound Caching with `Cached[T]`](#time-bound-caching-with-cachedt)
-9. [Error Handling](#error-handling)
-10. [Complete Example](#complete-example)
+6. [Namespaces](#namespaces)
+7. [Decorators](#decorators)
+8. [Context Manager / Teardown](#context-manager--teardown)
+9. [Time-Bound Caching with `Cached[T]`](#time-bound-caching-with-cachedt)
+10. [Error Handling](#error-handling)
+11. [Complete Example](#complete-example)
 
 ---
 
@@ -179,6 +180,78 @@ with parent.create_scope() as scope:
     obj = scope.resolve(IBar)
 # obj.close() called on exit if IBartype has .close()
 ```
+
+
+## Namespaces
+
+Namespaces allow multiple namespace-scoped containers within a single container tree.
+Types can be registered into the main (unnamespaced) container or into one or more
+named namespace scopes. Resolution with a namespace argument walks the requested
+namespace scopes before falling back to the standard scope chain.
+
+Namespaces are implemented as scope children with a ``__namespaces`` dict on the
+root container.
+
+### Registering into a namespace
+
+All registration methods accept ``namespace=None`` (default) or a namespace string:
+
+```python
+root.register_transient(IDb, Postgres)               # → root's default container
+root.register_transient(IDb, MySQL, namespace='mysql')  # → root.__namespaces['mysql']
+```
+
+### Resolving with namespace
+
+The ``resolve()`` and ``is_registered()`` methods accept ``namespace`` argument:
+
+```python
+root.resolve(IDb)                                        # → Postgres (default)
+root.resolve(IDb, namespace='mysql')                     # → MySQL
+root.resolve(IDb, namespace=['mysql', None])             # → MySQL or fallback
+```
+
+Namespace argument accepts:
+* **String**: ``namespace='v2'`` is equivalent to ``namespace=['v2', None]``
+* **List/Tuple**: ``namespace=['v2', 'v1', None]`` tries each in order
+* **Empty list**: ``namespace=[]`` treats as no fallback (strict failure)
+
+### Namespace-scoped resolution rules
+
+When a namespace-scoped container resolves with a ``namespace`` argument, it only
+checks the explicitly requested namespace scopes and its own registrations. It does
+NOT walk the scope chain to parent defaults. This prevents infinite resolution loops:
+
+```python
+root.register_transient(IDb, Postgres)  # default
+v2_scope = root.create_scope(namespace='v2')
+v2_scope.register_transient(IDb, MySQL)
+
+# With namespace → checks namespace scopes only
+root.resolve(IDb, namespace='v2')  # → MySQL
+
+# Without namespace on namespace-scoped container checks OWN registrations only
+v2_scope.resolve(IDb, namespace=[None])  # → ResolutionError (no IDb in v2_scope)
+v2_scope.resolve(IDb)  # → MySQL (its own registration, no namespace arg = scope chain)
+```
+
+### Decorator support
+
+Lifetime decorators accept ``namespace`` parameter:
+
+```python
+@singleton(namespace='v2')
+class MyService: ...
+
+@transient(namespace='mysql')
+class DBConnection: ...
+
+@provides(IFoo, IBar, namespace='v2')
+class MultiImpl: ...
+```
+
+When ``register_decorated()`` runs, it routes registrations into the specified
+namespace scopes based on the decoration info.
 
 ---
 

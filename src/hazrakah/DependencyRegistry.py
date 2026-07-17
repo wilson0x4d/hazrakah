@@ -19,16 +19,17 @@ class DependencyRegistry(DependencyResolver, Protocol):
     A protocol for dependency registration (and resolution) tasks.
     """
 
-    def is_registered(self, t: Type[Any]) -> bool:
+    def is_registered(self, t: Type[Any], namespace: Optional[str] = None) -> bool:
         """
         Check if type *t* has a registration already.
 
         :param t: The type to check for.
+        :param namespace: (Optional) Namespace to check.
         :return: True if a registration exists.
         """
         ...
 
-    def register_instance(self, t: Type[Any], instance: Any) -> DependencyRegistry:
+    def register_instance(self, t: Type[Any], instance: Any, namespace: Optional[str] = None) -> DependencyRegistry:
         """
         Create an INSTANCE type registration for type *t*.
 
@@ -36,12 +37,13 @@ class DependencyRegistry(DependencyResolver, Protocol):
 
         :param t: The type to register for.
         :param instance: The instance to register.
+        :param namespace: (Optional) Namespace to register in.
         :returns: ``self`` for method chaining (on ``Container`` implementations).
         :raises TypeError: When the provided instance is not an instance of type *t* (type mismatch.)
         """
         ...
 
-    def register_singleton(self, t: Type[Any], target: Optional[Target[Any]] = None) -> DependencyRegistry:
+    def register_singleton(self, t: Type[Any], target: Optional[Any] = None, namespace: Optional[str] = None) -> DependencyRegistry:
         """
         Create a SINGLETON type registration for type *t*.
 
@@ -49,11 +51,12 @@ class DependencyRegistry(DependencyResolver, Protocol):
 
         :param t: The type to register for.
         :param target: The type or factory to be used when resolving type *t*.  Omit to use *t* as the target (requires *t* to be a concrete type.)
+        :param namespace: (Optional) Namespace to register in.
         :returns: ``self`` for method chaining (on ``Container`` implementations).
         """
         ...
 
-    def register_transient(self, t: Type[Any], target: Optional[Target[Any]] = None) -> DependencyRegistry:
+    def register_transient(self, t: Type[Any], target: Optional[Any] = None, namespace: Optional[str] = None) -> DependencyRegistry:
         """
         Create a TRANSIENT type registration for type *t*.
 
@@ -61,6 +64,7 @@ class DependencyRegistry(DependencyResolver, Protocol):
 
         :param t: The type to register for.
         :param target: The type or factory to be used when resolving type *t*.  Omit to use *t* as the target (requires *t* to be a concrete type.)
+        :param namespace: (Optional) Namespace to register in.
         :returns: ``self`` for method chaining (on ``Container`` implementations).
         """
         ...

@@ -10,6 +10,7 @@ This README is only a high-level introduction to **hazrakah**. For more detailed
 
 - Supports Singleton, Transient, and Instance lifetimes.
 - **Hierarchical scoping**; Isolate registrations and/or resolves. optionally use a context manager to deterministically tear down a scope and its resolved objects.
+- **Namespaced Registrations**; Register types into named scopes and resolve with priority chains. Allows multiple implementations of the same interface to coexist.
 - **Protocols, ABCs, and Concretes** can be registered against **Factory Functions and Concretes**.
 - **Lifetime Decorators**; (OPTIONAL) Types decorated with  `@singleton`, `@transient` or `@instanced` can be registered with a single call to `register_decorated()`, simplifying orchestration.
 - **Implicit Multi-Registration**; Types decorated with `@provides` bind to all provided types (unless explicit types are specified during registration.)

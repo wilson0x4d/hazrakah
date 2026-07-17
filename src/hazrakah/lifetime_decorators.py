@@ -45,6 +45,7 @@ class DecorationInfo:
     :ivar target: The original callable / class that was decorated.
     :ivar interface: The single interface this entry registers for.
     :ivar depends_on: Ordering hints -- references to other registered interfaces.
+    :ivar namespace: (Optional) Namespace to register into.
     """
 
     lifetime: Lifetime
@@ -58,6 +59,7 @@ class DecorationInfo:
     ]
     interface: type
     depends_on: tuple[type, ...]
+    namespace: Optional[str] = None
 
 
 class _DecorationInfoManager:
@@ -195,6 +197,7 @@ def singleton(
     *,
     types: Optional[Union[type, tuple[type, ...]]] = None,
     depends_on: tuple[type, ...] = (),
+    namespace: Optional[str] = None,
 ) -> Any:
     """
     Register *target* as a singleton.
@@ -211,6 +214,7 @@ def singleton(
         # @singleton() or @singleton(types=IFoo) -- return proxy capturing types/depends_on.
         _types = types
         _dep = depends_on
+        _ns = namespace
 
         def __proxy(_target: Type[T]) -> type[T]:
             _inferred = (
@@ -219,7 +223,7 @@ def singleton(
                 else ()
             )
             _merged = _dep + tuple(d for d in _inferred if d not in set(_dep))
-            return singleton(_target, types=(_types or _target), depends_on=_merged)  # type: ignore[return-value]
+            return singleton(_target, types=(_types or _target), depends_on=_merged, namespace=_ns)  # type: ignore[return-value]
         return __proxy  # type: ignore[return-value]
 
     unwrapped = inspect.unwrap(target)  # type: ignore[arg-type]
@@ -254,6 +258,7 @@ def singleton(
             target=unwrapped,  # type: ignore[arg-type]
             interface=iface,
             depends_on=depends_on,
+            namespace=namespace,
         )
         _DecorationInfoManager.instance().register(info_entry)
 
@@ -266,11 +271,13 @@ def transient(
     *,
     types: Optional[Union[type, tuple[type, ...]]] = None,
     depends_on: tuple[type, ...] = (),
+    namespace: Optional[str] = None,
 ) -> Any:
     """Register *target* as a transient."""
     if target is None:
         _types = types
         _dep = depends_on
+        _ns = namespace
 
         def __proxy(_target: Type[T]) -> type[T]:
             _inferred = (
@@ -279,7 +286,7 @@ def transient(
                 else ()
             )
             _merged = _dep + tuple(d for d in _inferred if d not in set(_dep))
-            return transient(_target, types=(_types or _target), depends_on=_merged)  # type: ignore[return-value]
+            return transient(_target, types=(_types or _target), depends_on=_merged, namespace=_ns)  # type: ignore[return-value]
 
         return __proxy  # type: ignore[return-value]
 
@@ -316,6 +323,7 @@ def transient(
             target=unwrapped,  # type: ignore[arg-type]
             interface=iface,
             depends_on=depends_on,
+            namespace=namespace,
         )
         _DecorationInfoManager.instance().register(info_entry)
 
@@ -328,11 +336,13 @@ def instanced(
     *,
     types: Optional[Union[type, tuple[type, ...]]] = None,
     depends_on: tuple[type, ...] = (),
+    namespace: Optional[str] = None,
 ) -> Any:
     """Register *target* as an instance (created once at decoration time)."""
     if target is None:
         _types = types
         _dep = depends_on
+        _ns = namespace
 
         def __proxy(_target: Type[T]) -> type[T]:
             _inferred = (
@@ -341,7 +351,7 @@ def instanced(
                 else ()
             )
             _merged = _dep + tuple(d for d in _inferred if d not in set(_dep))
-            return instanced(_target, types=(_types or _target), depends_on=_merged)  # type: ignore[return-value]
+            return instanced(_target, types=(_types or _target), depends_on=_merged, namespace=_ns)  # type: ignore[return-value]
         return __proxy  # type: ignore[return-value]
 
     unwrapped = inspect.unwrap(target)  # type: ignore[arg-type]
@@ -377,6 +387,7 @@ def instanced(
             target=unwrapped,  # type: ignore[arg-type]
             interface=iface,
             depends_on=depends_on,
+            namespace=namespace,
         )
         _DecorationInfoManager.instance().register(info_entry)
 

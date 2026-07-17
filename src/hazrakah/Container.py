@@ -9,10 +9,12 @@ from enum import IntEnum
 import inspect
 import re
 import sys
+import threading
 from types import NoneType, TracebackType, UnionType
 from typing import (
     _SpecialForm,
     Any,
+    Iterable,
     Optional,
     Protocol,
     Type,
@@ -30,6 +32,7 @@ from .DependencyRegistry import DependencyRegistry, Target, Factory
 from .DependencyResolver import DependencyResolver, ScopedDependencyResolver
 
 T = TypeVar('T')
+_thread_local = threading.local()
 
 
 class Lifetime(IntEnum):
@@ -138,14 +141,24 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
     __registrations: dict[Type[Any], Registration]
     __proto_co_code: Any
     __tracked: set[Any]
+    __namespaces: dict[str, Container]
+    __namespace: Optional[str]
 
-    def __init__(self, outer_scope: Optional[Container] = None, frozen: bool = False, self_resolve: bool = True) -> None:
+    def __init__(
+        self,
+        outer_scope: Optional[Container] = None,
+        frozen: bool = False,
+        self_resolve: bool = True,
+        namespace: Optional[str] = None,
+    ) -> None:
         super().__setattr__('__frozen', False)
         self.__self_resolve = self_resolve
         self.__singletons = {}
         self.__outer_scope = outer_scope
         self.__registrations = {}
         self.__tracked: set[Any] = set()
+        self.__namespaces = {}
+        super().__setattr__('__namespace', namespace)
 
         class _proto(Protocol):
             pass
@@ -320,7 +333,8 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
                       and self.__is_intrinsic_type(dep_type)):
                     kwargs[name] = param.default
                 else:
-                    kwargs[name] = self.resolve(dep_type)
+                    ns = getattr(_thread_local, 'namespace', None)
+                    kwargs[name] = self.resolve(dep_type, namespace=ns)  # type: ignore[arg-type]
             except ResolutionError:
                 # Fallback: use param.default if resolution failed
                 if param.default is not inspect.Parameter.empty:
@@ -339,16 +353,109 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
             scope = scope.__outer_scope
         return None, None
 
-    def is_registered(self, t: Type[Any]) -> bool:
-        r, c = self.__get_registration(t)
-        return r is not None
+    def __normalize_namespace(self, namespace: str | Iterable[str | None] | Iterable[str] | None) -> list[str | None]:
+        """Normalize a namespace argument to a list of namespace strings or None."""
+        if namespace is None:
+            return []
+        if isinstance(namespace, str):
+            return [namespace, None]
+        return list(namespace)
 
-    def register_instance(self, t: Type[Any] | object, instance: Optional[Any] = None) -> Container:
+    def __ensure_namespace_container(self, namespace: str) -> Container:
+        """Ensure a namespace child container exists, creating it if needed."""
+        if namespace not in self.__namespaces:
+            child = self.create_scope(frozen=getattr(self, '__frozen', False), namespace=namespace)
+            self.__namespaces[namespace] = child
+        return self.__namespaces[namespace]
+
+    def __resolve_with_namespaces(self, t: Type[Any], namespace_chain: list[str | None]) -> Any:
+        """Resolve type *t* using a namespace priority chain."""
+        if not namespace_chain:
+            # Empty chain: standard resolution via scope chain
+            registration, scope = self.__get_registration(t)
+            if registration is None:
+                return self._fallback_resolve(t)
+            return self._dispatch_registration(t, registration, scope)  # type: ignore[arg-type]
+
+        # Find the root container (the one that owns the namespaces dict)
+        root: Container = self
+        while getattr(root, '_Container__outer_scope', None) is not None:
+            root = root._Container__outer_scope  # type: ignore[attr-defined]
+
+        for ns in namespace_chain:
+            if ns is None:
+                # None means: check only THIS container's own registrations (no scope chain walk)
+                registration = self.__registrations.get(t)
+                if registration is not None:
+                    return self._dispatch_registration(t, registration, self)
+            elif ns in getattr(root, '_Container__namespaces', {}):  # type: ignore[attr-defined]
+                # Resolve from namespace child - it will check its own registrations only
+                ns_container = root._Container__namespaces[ns]  # type: ignore[attr-defined]
+                registration = ns_container.__registrations.get(t)
+                if registration is not None:
+                    return ns_container._dispatch_registration(t, registration, ns_container)
+                # If not found in namespace container's own registrations, continue to next in chain
+
+        # No match found
+        raise ResolutionError(f'No registration found for {t!r}')
+
+    def _fallback_resolve(self, t: Type[Any]) -> Any:
+        """Handle fallback resolution: concrete auto-reg, self-resolve, or error."""
+        if self.__is_concrete(t):
+            self.register_transient(t)
+            return self.resolve(t)
+        if self.__self_resolve is True and t in (DependencyRegistry, DependencyResolver, ScopedDependencyResolver):
+            return cast(Any, self)
+        raise ResolutionError(f'No registration found for {t!r}')
+
+    def _dispatch_registration(self, t: Type[Any], registration: Registration, scope: Container) -> Any:
+        """Dispatch registration by lifetime."""
+        match registration.lifetime:
+            case Lifetime.INSTANCE:
+                return registration.instance
+            case Lifetime.SINGLETON:
+                if scope is None:
+                    raise RuntimeError('Singleton registration found without owning container')
+                cache_key = t
+                tgt = registration.target
+                if tgt is not None and isinstance(tgt, type) and tgt is not t:
+                    cache_key = tgt
+                obj = scope.__singletons.get(cache_key)
+                if obj is None:
+                    obj = scope.__create_instance(t, registration, scope=scope)  # type: ignore[arg-type]
+                    scope.__singletons[cache_key] = obj
+                return obj
+            case Lifetime.TRANSIENT:
+                return self.__create_instance(t, registration, scope=scope)  # type: ignore[arg-type]
+            case _:  # pragma: no cover
+                raise RuntimeError(f'Unexpected lifetime {registration.lifetime!r}')
+
+    def is_registered(self, t: Type[Any], namespace: str | Iterable[str | None] | Iterable[str] | None = None) -> bool:
+        if namespace is None:
+            r, _ = self.__get_registration(t)
+            return r is not None
+        chain = self.__normalize_namespace(namespace)
+        if not chain:
+            # [] treated as [None] → standard lookup
+            r, _ = self.__get_registration(t)
+            return r is not None
+        for ns in chain:
+            if ns is None:
+                r, _ = self.__get_registration(t)
+                if r is not None:
+                    return True
+            elif ns in self.__namespaces:
+                if t in self.__namespaces[ns].__registrations:
+                    return True
+        return False
+
+    def register_instance(self, t: Type[Any] | object, instance: Optional[Any] = None, namespace: Optional[str] = None) -> Container:
         """
         Register a pre-existing *instance* for type *t*.
 
         :param t: The type to bind the instance to.
         :param instance: (OPTIONAL) An object that must be an instance of *t*.  Omit to construct a `t` instance automatically.
+        :param namespace: (Optional) Namespace to register into.
         :returns: ``self`` for method chaining.
         :raises TypeError: When *instance* is not an instance of *t*.
 
@@ -362,42 +469,39 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         is **completely ignored**. Only the type specified by *t* is registered. This applies
         regardless of whether the concrete class implements additional interfaces via @provides.
         """
+        if namespace is not None:
+            target = self.__ensure_namespace_container(namespace)
+            return target.register_instance(t, instance)
         self.__check_frozen(t)
         if instance is not None:
             # explicit `instance` --> `t` registration logic
             if not isinstance(t, type):
-                # in this use-case, `t` must be a type arg because `instance` was provided (explicit registration.)
                 raise RegistrationError(
                     '`t` must be a valid type arg when `instance` is provided.'
                 )
-            # skip isinstance for Protocol types that aren't @runtime_checkable;
-            # this is a "best attempt" at type enforcement, but we can't enforce the unenforcable.
             try:
                 isinstance(instance, t)
             except TypeError:
-                pass  # not a runtime-checkable type; nothing to validate
+                pass
             else:
                 if not isinstance(instance, t):
                     raise TypeError(f'{instance!r} is not an instance of type {t!r}')
             self.__register_for_lifetime(t, Lifetime.INSTANCE, instance)
         else:
             # inferred `instance` registration logic
-            instance = self.resolve(t) if isinstance(t, type) else t
-            # inspect for `@provides` usage
+            instance_obj = self.resolve(t) if isinstance(t, type) else t
             provided_types = self.__get_provided_types(t)
             if provided_types is not None:
-                # `t` has `@provides`, so register `instance` for all provided types
                 for provides_t in provided_types | {t}:
-                    self.__register_for_lifetime(provides_t, Lifetime.INSTANCE, instance)  # type: ignore[bad-argument-type, arg-type]
+                    self.__register_for_lifetime(provides_t, Lifetime.INSTANCE, instance_obj)  # type: ignore[bad-argument-type, arg-type]
             if isinstance(t, type):
-                self.__register_for_lifetime(t, Lifetime.INSTANCE, instance)
+                self.__register_for_lifetime(t, Lifetime.INSTANCE, instance_obj)
             else:
-                # when `t` is an instance, the type identify of the instance is registered
                 t = type(t)
-                self.__register_for_lifetime(t, Lifetime.INSTANCE, instance)
+                self.__register_for_lifetime(t, Lifetime.INSTANCE, instance_obj)
         return self
 
-    def register_singleton(self, t: Type[Any], target: Optional[Target[Any]] = None) -> Container:
+    def register_singleton(self, t: Type[Any], target: Optional[Any] = None, namespace: Optional[str] = None) -> Container:
         """
         Create a SINGLETON type registration for type *t*.
 
@@ -405,6 +509,7 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
 
         :param t: The type to register for.
         :param target: The type or factory to be used when resolving type *t*.  Omit to use *t* as the target (requires *t* to be a concrete type.)
+        :param namespace: (Optional) Namespace to register into.
         :returns: ``self`` for method chaining.
 
         Note on @provides
@@ -429,24 +534,22 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
 
         c.register_singleton(IFoo, MyImpl)  # explicit type override
         """
+        if namespace is not None:
+            target_container = self.__ensure_namespace_container(namespace)
+            return target_container.register_singleton(t, target)
         self.__check_frozen(t)
         if target is not None:
-            # explicit `t` --> `target` registration logic
             if not isinstance(t, type):
-                # in this use-case, `t` must be a type arg because `target` was provided (explicit registration.)
                 raise RegistrationError(
                     '`t` must be a valid type arg when `target` is provided.'
                 )
             self.__register_for_lifetime(t, Lifetime.SINGLETON, target)
         else:
-            # inferred `target` registration logic
             provided_types = self.__get_provided_types(t)
             if provided_types is not None:
-                # `t` has `@provides`, so register `t` for all provided types
                 for provides_t in provided_types | {t}:
                     self.__register_for_lifetime(provides_t, Lifetime.SINGLETON, t)  # type: ignore[bad-argument-type]
             else:
-                # `t` does not have `@provides`, so self-register `t`
                 self.__register_for_lifetime(t, Lifetime.SINGLETON, t)
         return self
 
@@ -468,7 +571,7 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
                 target=target
             )
 
-    def register_transient(self, t: Type[Any], target: Optional[Target[Any]] = None) -> Container:
+    def register_transient(self, t: Type[Any], target: Optional[Any] = None, namespace: Optional[str] = None) -> Container:
         """
         Create a TRANSIENT type registration for type *t*.
 
@@ -476,6 +579,7 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
 
         :param t: The type to register for.
         :param target: The type or factory to be used when resolving type *t*.  Omit to use *t* as the target (requires *t* to be a concrete type.)
+        :param namespace: (Optional) Namespace to register into.
         :returns: ``self`` for method chaining.
 
         Note on @provides
@@ -500,24 +604,22 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
 
         c.register_transient(IFoo, MyImpl)  # explicit type override
         """
+        if namespace is not None:
+            target_container = self.__ensure_namespace_container(namespace)
+            return target_container.register_transient(t, target)
         self.__check_frozen(t)
         if target is not None:
-            # explcit `t` --> `target` registration logic
             if not isinstance(t, type):
-                # in this use-case, `t` must be a type arg because `target` was provided (explicit registration.)
                 raise RegistrationError(
                     '`t` must be a valid type arg when `target` is provided.'
                 )
             self.__register_for_lifetime(t, Lifetime.TRANSIENT, target)
         else:
-            # inferred `target` registration logic
             provided_types = self.__get_provided_types(t)
             if provided_types is not None:
-                # @provides discovered -- register under *t* and all provided interfaces.
                 for provides_t in provided_types | {t}:
                     self.__register_for_lifetime(provides_t, Lifetime.TRANSIENT, t)  # type: ignore[bad-argument-type]
             else:
-                # `t` does not have `@provides`, so self-register `t`
                 self.__register_for_lifetime(t, Lifetime.TRANSIENT, t)
         return self
 
@@ -558,19 +660,16 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
                 unresolved.append(member)
 
         # dedupe for target:
-        # - multiple union members MAY map to the same concrete concrete target.
-        # - only "distinct targets" constitute true ambiguity.
         target_groups: dict[type, tuple[Type[Any], Container, Lifetime, Registration]] = {}
         for member, scope, lifetime, reg in matches:
-            tgt = reg.target  # Registration.target property (line 57)
+            tgt = reg.target
             key = tgt if isinstance(tgt, type) else None
             if key is not None and key in target_groups:
-                continue  # same concrete target already recorded
+                continue
             elif key is not None:
                 target_groups[key] = (member, scope, lifetime, reg)
 
         if len(target_groups) == 0:
-            # All registrations have non-type targets (factories); treat as normal multi-match
             distinct_matches = matches
         else:
             distinct_matches = list(target_groups.values())
@@ -595,15 +694,7 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         display_name = self._union_display_name(t)
         raise ResolutionError(f'No registration found for {display_name}: {names}')
 
-    @overload
-    def resolve(self, t: Type[T]) -> T:
-        ...
-
-    @overload
-    def resolve(self, t: Type[Any]) -> Any:
-        ...
-
-    def resolve(self, t: Type[Any]) -> Any:
+    def resolve(self, t: Type[T], namespace: str | Iterable[str | None] | Iterable[str] | None = None) -> T:
         """Resolve a type to its registered implementation.
 
         For **union types** (e.g. ``IFoo | IBar``):
@@ -617,54 +708,38 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
 
         For non-union types, looks up the registration and dispatches by lifetime:
 
-        * ``INSTANCE`` – returns the stored instance.
-        * ``SINGLETON`` – creates or returns a shared instance per container scope.
-        * ``TRANSIENT`` – creates and returns a new instance each time.
+        * ``INSTANCE`` - returns the stored instance.
+        * ``SINGLETON`` - creates or returns a shared instance per container scope.
+        * ``TRANSIENT`` - creates and returns a new instance each time.
         """
         is_optional = isinstance(t, str) and t.startswith('Optional')
         origin = get_origin(t)
         if origin is Union or origin is UnionType:
-            # an attempt to deunionize from `Optional[T]` to `T`` -- won't work for string annotations)
-            # if we cannot instantiate the resulting type, because it is Optional (unioned with `None`)
-            # we will allow the passing of None in leiu.
             org_args = get_args(t)
             if NoneType in org_args:
                 t = [e for e in org_args if e is not NoneType][0]
             else:
                 return self._resolve_union(t)
         registration, scope = self.__get_registration(t)
-        if registration is None:
-            if self.__is_concrete(t):
-                # implicit reg for concrete types
-                self.register_transient(t)
-                return self.resolve(t)
-            else:
-                if is_optional:
-                    return None
-                if self.__self_resolve is True and t in (DependencyRegistry, DependencyResolver, ScopedDependencyResolver):
-                    return cast(Any, self)
-                raise ResolutionError(f'No registration found for {t!r}')
-        match registration.lifetime:
-            case Lifetime.INSTANCE:
-                return registration.instance
-            case Lifetime.SINGLETON:
-                if scope is None:
-                    raise RuntimeError('Singleton registration found without owning container')
-                # When target is a concrete type, use it as the shared singleton cache key
-                # so all provided interfaces sharing this registration get the same instance.
-                cache_key = t
-                tgt = registration.target
-                if tgt is not None and isinstance(tgt, type) and tgt is not t:
-                    cache_key = tgt
-                obj = scope.__singletons.get(cache_key)
-                if obj is None:
-                    obj = scope.__create_instance(t, registration, scope=scope)  # type: ignore[arg-type]
-                    scope.__singletons[cache_key] = obj
-                return obj
-            case Lifetime.TRANSIENT:
-                return self.__create_instance(t, registration, scope=scope)  # type: ignore[arg-type]
-            case _:  # pragma: no cover
-                raise RuntimeError(f'Unexpected lifetime {registration.lifetime!r}')
+        if namespace is not None:
+            chain = self.__normalize_namespace(namespace)
+            try:
+                _thread_local.namespace = chain
+                return self.__resolve_with_namespaces(t, chain)
+            except ResolutionError:
+                # Keep namespace in thread-local so inner resolves can use it for fallback
+                if not hasattr(_thread_local, 'namespace'):
+                    _thread_local.namespace = chain
+                pass
+        else:
+            # No namespace provided - ensure thread-local is clean
+            if hasattr(_thread_local, 'namespace'):
+                del _thread_local.namespace
+
+        if registration is not None:
+            return self._dispatch_registration(t, registration, scope)  # type: ignore[arg-type]
+
+        return self._fallback_resolve(t)
 
     def register_decorated(
         self,
@@ -737,9 +812,9 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
 
             match info.lifetime:
                 case Lifetime.SINGLETON:
-                    self.register_singleton(info.interface, info.target)  # type: ignore[arg-type]
+                    self.register_singleton(info.interface, info.target, namespace=getattr(info, 'namespace', None))  # type: ignore[arg-type]
                 case Lifetime.TRANSIENT:
-                    self.register_transient(info.interface, info.target)  # type: ignore[arg-type]
+                    self.register_transient(info.interface, info.target, namespace=getattr(info, 'namespace', None))  # type: ignore[arg-type]
                 case Lifetime.INSTANCE:
                     self.register_instance(
                         info.interface,
@@ -747,13 +822,27 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
                             self.resolve(info.target)
                             if isinstance(info.target, type)
                             else info.target(self)  # type: ignore[call-arg]
-                        )
+                        ),
+                        namespace=getattr(info, 'namespace', None),
                     )
 
         return self
 
-    def create_scope(self, frozen: Optional[bool] = False) -> Container:
-        return Container(outer_scope=self, frozen=frozen or getattr(self, '__frozen'), self_resolve=self.__self_resolve)
+    def create_scope(
+        self,
+        frozen: Optional[bool] = None,
+        self_resolve: Optional[bool] = None,
+        namespace: Optional[str] = None,
+    ) -> Container:
+        child = Container(
+            outer_scope=self,
+            frozen=frozen if frozen is not None else (getattr(self, '__frozen') if getattr(self, '__frozen', None) is not None else False),
+            self_resolve=self_resolve if self_resolve is not None else self.__self_resolve,
+            namespace=namespace,
+        )
+        if namespace is not None:
+            self.__namespaces[namespace] = child
+        return child
 
     def freeze(self) -> None:
         """
@@ -762,6 +851,8 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         Any attempt to create registrations after the container has been frozen will result in a :class:`RegistrationError`.
         """
         super().__setattr__('__frozen', True)
+        for ns_container in getattr(self, '_Container__namespaces', {}).values():  # type: ignore[attr-defined]
+            ns_container.freeze()
 
     def __enter__(self) -> Container:
         """Return *self* to enable context manager usage."""

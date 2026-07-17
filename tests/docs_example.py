@@ -10,6 +10,7 @@ that each block is self-contained and readable without context.
 
 from datetime import timedelta
 
+import asyncio
 from hazrakah import (
     Cached,
     Container,
@@ -92,20 +93,20 @@ def test_basic_lifetime_registration() -> None:
 
     # TRANSIENT — a new instance for every resolve.
     container.register_transient(IFoo, Foo)
-    foo1 = container.resolve(IFoo)
-    foo2 = container.resolve(IFoo)
+    foo1 = container.resolve(IFoo)  # type: ignore[type-abstract]
+    foo2 = container.resolve(IFoo)  # type: ignore[type-abstract]
     assert foo1 is not foo2
 
     # SINGLETON — one shared instance across all resolves in scope.
     container.register_singleton(IFooBar, lambda c: c.resolve(FooBarImpl))
-    fba = container.resolve(IFooBar)
-    fbb = container.resolve(IFooBar)
+    fba = container.resolve(IFooBar)  # type: ignore[type-abstract]
+    fbb = container.resolve(IFooBar)  # type: ignore[type-abstract]
     assert fba is fbb
 
     # INSTANCE — your exact object, returned everywhere (including child scopes).
     bar_obj = Bar()
     container.register_instance(IBar, bar_obj)
-    assert container.resolve(IBar) is bar_obj
+    assert container.resolve(IBar) is bar_obj  # type: ignore[type-abstract]
 
 
 @fact
@@ -116,14 +117,14 @@ def test_hierarchical_scopes() -> None:
 
     # Parent registrations flow down into the child.
     parent.register_transient(IFizz, Fizz)
-    assert isinstance(parent.resolve(IFizz), Fizz)
-    assert isinstance(child.resolve(IFizz), Fizz)
+    assert isinstance(parent.resolve(IFizz), Fizz)  # type: ignore[type-abstract]
+    assert isinstance(child.resolve(IFizz), Fizz)  # type: ignore[type-abstract]
 
     # Child-only registrations are invisible to parent.
     child.register_transient(IBuzz, Buzz)
-    assert isinstance(child.resolve(IBuzz), Buzz)
+    assert isinstance(child.resolve(IBuzz), Buzz)  # type: ignore[type-abstract]
     try:
-        parent.resolve(IBuzz)
+        parent.resolve(IBuzz)  # type: ignore[type-abstract]
     except ResolutionError:
         pass  # expected
 
@@ -148,9 +149,9 @@ def test_fluent_chaining() -> None:
         .register_instance(IFizz, Fizz())
     )
 
-    assert isinstance(container.resolve(IFoo), Foo)
-    assert isinstance(container.resolve(IBar), Bar)
-    assert isinstance(container.resolve(IFizz), Fizz)
+    assert isinstance(container.resolve(IFoo), Foo)  # type: ignore[type-abstract]
+    assert isinstance(container.resolve(IBar), Bar)  # type: ignore[type-abstract]
+    assert isinstance(container.resolve(IFizz), Fizz)  # type: ignore[type-abstract]
 
 
 @fact
@@ -175,13 +176,13 @@ def test_declarative_decorators() -> None:
     c.register_decorated()
 
     # Singleton — same instance each resolve.
-    a = c.resolve(IFoo)
-    b = c.resolve(IFoo)
+    a = c.resolve(IFoo)  # type: ignore[type-abstract]
+    b = c.resolve(IFoo)  # type: ignore[type-abstract]
     assert a is b
 
     # Transient — new instance each resolve.
-    x = c.resolve(IBar)
-    y = c.resolve(IBar)
+    x = c.resolve(IBar)  # type: ignore[type-abstract]
+    y = c.resolve(IBar)  # type: ignore[type-abstract]
     assert x is not y
 
     # Instanced — the decorated class is registered with your exact class as target.
@@ -205,8 +206,8 @@ def test_provides_multi_registration() -> None:
     c = Container()
     c.register_singleton(MultiImpl)   # registers under IFoo, IBar, and MultiImpl
 
-    obj_a = c.resolve(IFoo)
-    obj_b = c.resolve(IBar)
+    obj_a = c.resolve(IFoo)  # type: ignore[type-abstract]
+    obj_b = c.resolve(IBar)  # type: ignore[type-abstract]
     assert isinstance(obj_a, MultiImpl)
     assert isinstance(obj_b, MultiImpl)
     assert obj_a is obj_b  # @provides caches across interfaces
@@ -256,7 +257,7 @@ def test_caching_container_integration() -> None:
 
 
 @fact
-def test_cached_timeout_and_reset() -> None:
+async def test_cached_timeout_and_reset() -> None:
     """Zero TTL always re-invokes; reset discards cached value."""
     call_count = 0
 
@@ -267,6 +268,7 @@ def test_cached_timeout_and_reset() -> None:
 
     cache = Cached(factory, ttl=timedelta(seconds=0))
     first = cache(_cached_resolver)  # type: ignore[arg-type]
+    await asyncio.sleep(0.1)
     second = cache(_cached_resolver)  # type: ignore[arg-type]
     assert first is not second  # zero TTL — always miss
     assert call_count == 2

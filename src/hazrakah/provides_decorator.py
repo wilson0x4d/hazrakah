@@ -22,7 +22,7 @@ Activation depends entirely on how the container later registers the decorated c
 
 from __future__ import annotations
 
-from typing import Any, Callable, Type, TypeVar
+from typing import Any, Callable, Optional, Type, TypeVar
 
 from .RegistrationError import RegistrationError
 
@@ -40,6 +40,7 @@ def _raise_if_lifetime_decorated(unwrapped: Any) -> None:
 
 def provides(
     *types: Type[Any],
+    namespace: Optional[str] = None,
 ) -> Callable[[T], T]:
     """Passive marker decorator: declares which protocols *cls* implements.
 
@@ -60,6 +61,7 @@ def provides(
         @provides()                     # marker-only, no interfaces (backward compatible)
 
     :param types: Protocol types the decorated class implements. Variadic -- no tuple wrapping.
+    :param namespace: (Optional) Namespace to register into.
     """
     def decorator(cls: T) -> T:
         _raise_if_lifetime_decorated(cls)
@@ -68,6 +70,8 @@ def provides(
         else:
             # Bare @provides with no args -- store empty tuple for consistent detection.
             setattr(cls, '__hazrakah_provides', ())
+        if namespace is not None:
+            setattr(cls, '__hazrakah_namespace', namespace)
         return cls
     return decorator
 
