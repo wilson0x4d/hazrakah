@@ -12,14 +12,18 @@ This was the root cause of the user's reported bug where resolution of
 
 from __future__ import annotations
 
+import sys
 import types
 from hazrakah import Container, ResolutionError
 from hazrakah.Container import Container as _Container
 from punit import fact, raises
 
+from .ModuleShadowedType import ModuleShadowedDependentType, ModuleShadowedType
+
 
 class _ConfigClass:
     """The intended concrete class for dependency resolution."""
+
     def __init__(self) -> None:
         self.name = 'ConfigClass'
 
@@ -200,3 +204,112 @@ def __unwrap_forward_ref_non_string_returns_unchanged() -> None:
         type('TestOwner', (), {'__module__': 'fake'})
     )
     assert unwrapped is _ConfigClass
+
+
+@fact
+def module_shadowed_type_must_resolve_direct() -> None:
+    c = Container()
+    obj = c.resolve(ModuleShadowedType)
+    assert obj is not None
+
+@fact
+def module_shadowed_type_must_resolve_indirect() -> None:
+    c = Container()
+    obj = c.resolve(ModuleShadowedDependentType)
+    assert obj is not None
+
+
+# ---------------------------------------------------------------------------
+# Integration: dotted forward references (user's exact scenario)
+# ---------------------------------------------------------------------------
+
+
+@fact
+def dotted_forward_ref_in_sys_modules_resolves_correctly() -> None:
+    """When a forward reference is a dotted path like
+    ``'pkg.module.Class'`` and ``eval`` fails (e.g. because the owning
+    module's globals shadow the name with a module), the fallback must
+    resolve through ``importlib.import_module`` and attribute lookup.
+
+    Regression test for the user's ``appsettings2.Configuration`` issue.
+    """
+    # The key scenario: a class is resolved via a dotted forward reference
+    # that eval() can't resolve (name not in globals), but the module is in
+    # sys.modules under the first component.
+    pkg_mod = types.ModuleType('dotted_app_settings_cfg')
+    pkg_mod.__path__ = []
+
+    class DottedAppSettings:
+        value = 'settings'
+
+    pkg_mod.__dict__['DottedAppSettings'] = DottedAppSettings
+    old = sys.modules.get('dotted_app_settings_cfg')
+    sys.modules['dotted_app_settings_cfg'] = pkg_mod
+
+    try:
+        owner = type(  # type: ignore[assignment]
+            'TestOwner',
+            (),
+            {
+                '__module__': 'dotted_app_settings_cfg',  # owner IS in sys.modules
+                '__globals__': {},  # empty globals so eval fails
+            },
+        )
+
+        # eval fails (no 'dotted_app_settings_cfg' in globals)
+        # The fallback __resolve_dotted_forward_ref finds it in sys.modules
+        unwrapped = _Container._Container__unwrap_forward_ref(  # type: ignore[attr-defined]
+            'dotted_app_settings_cfg.DottedAppSettings',
+            owner,
+        )
+        assert unwrapped is DottedAppSettings, (
+            f'Expected DottedAppSettings, got {unwrapped!r}'
+        )
+    finally:
+        if old is not None:
+            sys.modules['dotted_app_settings_cfg'] = old
+        else:
+            sys.modules.pop('dotted_app_settings_cfg', None)
+
+
+@fact
+def dotted_forward_ref_eval_fails_resolved_via_module_tree() -> None:
+    """When ``eval(annotation, globals_)`` fails (e.g. globals don't have
+    the dotted path), the fallback resolves ``'pkg.module.Class'`` by
+    importing from the package tree.
+    """
+    pkg_mod = types.ModuleType('test_dotted_resolver')
+    pkg_mod.__path__ = []
+
+    class ResolverClass:
+        pass
+
+    pkg_mod.__dict__['ResolverClass'] = ResolverClass
+    old = sys.modules.get('test_dotted_resolver')
+    sys.modules['test_dotted_resolver'] = pkg_mod
+
+    try:
+        # Simulate globals where 'test_dotted_resolver.ResolverClass' exists
+        # as a dotted string but NOT as a resolved eval result.
+        owner = type(  # type: ignore[assignment]
+            'TestOwner',
+            (),
+            {
+                '__module__': 'test_dotted_resolver',
+                '__globals__': {'test_dotted_resolver.ResolverClass': pkg_mod},  # wrong binding
+            },
+        )
+
+        unwrapped = _Container._Container__unwrap_forward_ref(  # type: ignore[attr-defined]
+            'test_dotted_resolver.ResolverClass',
+            owner,
+        )
+        assert unwrapped is ResolverClass, (
+            f'Expected ResolverClass, got {unwrapped!r}'
+        )
+    finally:
+        if old is not None:
+            sys.modules['test_dotted_resolver'] = old
+        else:
+            sys.modules.pop('test_dotted_resolver', None)
+

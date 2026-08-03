@@ -210,27 +210,102 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         :param owner: Annotation owner.
         :return: A Type matching the annotation.
         """
-        if isinstance(annotation, str):
-            globals_ = getattr(owner, '__globals__', {}) or globals()
+        if not isinstance(annotation, str):
+            return annotation
+
+        # Try evaluating the annotation in the owner's globals.
+        globals_ = getattr(owner, '__globals__', {}) or globals()
+        try:
+            resolved = eval(annotation, globals_, {})
+            # Only reject results that are modules or plain non-type
+            # objects (like `None` or a module bound to the name).
+            # Union types, generics, etc. should pass through unchanged
+            # so that `Optional[T]` is still properly resolved.
+            if resolved is not None and not isinstance(resolved, type):
+                if isinstance(resolved, ModuleType):
+                    resolved = annotation
+            return resolved
+        except Exception:
+            # eval failed — attempt to resolve the annotation as a
+            # dotted path (e.g. ``'appsettings2.Configuration'``) by
+            # walking up the owner's package hierarchy and trying
+            # ``importlib.import_module`` on intermediate components.
+            return Container.__resolve_dotted_forward_ref(annotation, owner)
+
+    @staticmethod
+    def __resolve_dotted_forward_ref(annotation: str, owner: Type[Any]) -> Any:
+        """Resolve a dotted forward-reference string that ``eval`` could not
+        evaluate.  Walks up the owner's package hierarchy and uses
+        ``importlib.import_module`` to try intermediate paths.
+        """
+        import importlib
+
+        owner_mod = sys.modules.get(owner.__module__)
+
+        parts = annotation.split('.')
+
+        # Strategy 1: try importing from the top-level package name.
+        top = parts[0]
+        top_mod = sys.modules.get(top)
+        if top_mod is not None:
             try:
-                resolved = eval(annotation, globals_, {})
-                # Only reject results that are modules or plain non-type
-                # objects (like `None` or a module bound to the name).
-                # Union types, generics, etc. should pass through unchanged
-                # so that `Optional[T]` is still properly resolved.
-                if resolved is not None and not isinstance(resolved, type):
-                    if isinstance(resolved, ModuleType):
-                        resolved = annotation
-                return resolved
-            except Exception:
-                mod = sys.modules.get(owner.__module__)
-                if mod is not None and hasattr(mod, annotation):
-                    candidate = getattr(mod, annotation)
-                    if candidate is not None and isinstance(candidate, ModuleType):
-                        return annotation
-                    if candidate is not None and isinstance(candidate, type):
-                        return candidate
+                obj: Any = top_mod
+                for attr in parts[1:]:
+                    if hasattr(obj, attr):
+                        obj = getattr(obj, attr)
+                    else:
+                        subpath = '.'.join(parts[: parts.index(attr) + 1])
+                        try:
+                            sub_mod = importlib.import_module(subpath)
+                        except Exception:
+                            return annotation
+                        obj = getattr(sub_mod, attr, sub_mod)
+                        if not isinstance(obj, type):
+                            return annotation
+                        break
+                else:
+                    if isinstance(obj, type):
+                        return obj
                     return annotation
+            except Exception:
+                pass  # fall through to next strategies
+
+        # Strategy 2: walk up owner's package hierarchy.
+        if owner_mod is not None:
+            parent = getattr(owner_mod, '__package__', None)
+            pkg_parts = list(filter(None, parent.split('.'))) if parent else []
+            while pkg_parts:
+                pkg_name = '.'.join(pkg_parts)
+                pkg_mod = sys.modules.get(pkg_name)
+                if pkg_mod is None:
+                    pkg_parts.pop()
+                    continue
+                # Try importing the full dotted path.
+                try:
+                    mod = importlib.import_module(annotation) if annotation in sys.modules else None
+                    if mod is not None:
+                        obj = mod
+                        for attr in parts[1:]:
+                            obj = getattr(obj, attr, None)
+                            if obj is None:
+                                break
+                        if isinstance(obj, type):
+                            return obj
+                except Exception:
+                    pass
+                # Try bare last-component lookup.
+                bare = parts[-1] if parts else annotation
+                candidate = getattr(pkg_mod, bare, None)
+                if candidate is not None and isinstance(candidate, type):
+                    return candidate
+                pkg_parts.pop()
+
+        # Strategy 3: bare lookup on the owner module.
+        if hasattr(owner_mod, annotation):
+            candidate = getattr(owner_mod, annotation)
+            if candidate is not None and isinstance(candidate, type):
+                return candidate
+
         return annotation
 
     @staticmethod
