@@ -1021,12 +1021,12 @@ def resolve_all_three_interfaces_fail_when_self_resolve_false() -> None:
 # ---- invoke tests ----
 
 
-class IFoo(Protocol):
+class IFoo2(Protocol):
     def do_thing(self) -> str:
         ...
 
 
-class FooImpl:
+class Foo2Impl:
 
     def __init__(self) -> None:
         self.result: str = 'foo'
@@ -1035,12 +1035,12 @@ class FooImpl:
         return self.result
 
 
-class IBar(Protocol):
+class IBar2(Protocol):
     def calculate(self, a: int, b: int) -> int:
         ...
 
 
-class BarImpl:
+class Bar2Impl:
 
     def __init__(self) -> None:
         self.offset: int = 10
@@ -1049,11 +1049,11 @@ class BarImpl:
         return a + b + self.offset
 
 
-class IBaz(Protocol):
+class IBaz2(Protocol):
     pass
 
 
-class BazImpl:
+class Baz2Impl:
 
     def __init__(self) -> None:
         self.value: int = 7
@@ -1078,11 +1078,11 @@ def invoke_resolves_params_from_di() -> None:
     """invoke resolves parameters via DI when kwargs are not provided."""
 
     c = Container()
-    c.register_instance(IFoo, FooImpl())
+    c.register_instance(IFoo2, Foo2Impl())
 
     calls: list[str] = []
 
-    def use_foo(foo: IFoo) -> str:
+    def use_foo(foo: IFoo2) -> str:
         calls.append('called')
         return foo.do_thing()
 
@@ -1096,7 +1096,7 @@ def invoke_kwargs_override_di() -> None:
     """invoke uses kwarg values instead of resolving from DI."""
 
     c = Container()
-    c.register_instance(IFoo, FooImpl())
+    c.register_instance(IFoo2, Foo2Impl())
 
     class FakeFoo:
         def do_thing(self) -> str:
@@ -1157,7 +1157,7 @@ def invoke_raises_resolution_error_for_unresolvable_required_param() -> None:
 
     c = Container()
 
-    def needs_baz(b: IBaz) -> int:  # type: ignore[empty-body]
+    def needs_baz(b: IBaz2) -> int:  # type: ignore[empty-body]
         value: int = getattr(b, 'value', -1)  # type: ignore[attr-defined]
         return value
 
@@ -1172,10 +1172,10 @@ def invoke_with_class_target() -> None:
     """invoke works with a class type as the target, resolving __init__ params."""
 
     c = Container()
-    c.register_instance(IBar, BarImpl())
+    c.register_instance(IBar2, Bar2Impl())
 
-    result = c.invoke(BarImpl)  # type: ignore[return-value]
-    assert isinstance(result, BarImpl)
+    result = c.invoke(Bar2Impl)  # type: ignore[return-value]
+    assert isinstance(result, Bar2Impl)
     assert result.offset == 10
 
 
@@ -1183,7 +1183,7 @@ def invoke_with_class_target() -> None:
 def invoke_with_method_on_instance() -> None:
     """invoke works with a bound method."""
 
-    foo = FooImpl()
+    foo = Foo2Impl()
     c = Container()
 
     result = c.invoke(foo.do_thing)
@@ -1194,19 +1194,19 @@ def invoke_with_method_on_instance() -> None:
 def invoke_with_namespace() -> None:
     """invoke passes namespace to all resolve calls."""
 
-    class V1Baz(BazImpl):
+    class V1Baz(Baz2Impl):
         def __init__(self) -> None:
             self.value = 1
 
-    class V2Baz(BazImpl):
+    class V2Baz(Baz2Impl):
         def __init__(self) -> None:
             self.value = 2
 
     c = Container()
-    c.register_instance(IBaz, V1Baz(), namespace='v1')
-    c.register_instance(IBaz, V2Baz(), namespace='v2')
+    c.register_instance(IBaz2, V1Baz(), namespace='v1')
+    c.register_instance(IBaz2, V2Baz(), namespace='v2')
 
-    def read_baz(b: IBaz) -> int:
+    def read_baz(b: IBaz2) -> int:
         return cast(Any, b).value  # type: ignore[attr-defined]
 
     result_v1 = c.invoke(read_baz, namespace='v1')  # type: ignore[return-value]
@@ -1252,12 +1252,12 @@ def invoke_mixed_di_and_kwargs() -> None:
     """invoke resolves some params from DI and others from kwargs."""
 
     c = Container()
-    c.register_instance(IFoo, FooImpl())
+    c.register_instance(IFoo2, Foo2Impl())
     c.register_instance(int, 42)  # type: ignore[arg-type]
 
-    call_log: list[tuple[IFoo, int]] = []
+    call_log: list[tuple[IFoo2, int]] = []
 
-    def use_both(foo: IFoo, multiplier: int) -> str:
+    def use_both(foo: IFoo2, multiplier: int) -> str:
         call_log.append((foo, multiplier))
         return f'{foo.do_thing()} x {multiplier}'
 

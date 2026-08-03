@@ -20,6 +20,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "hanaro (>=1.3.2)",
     "coverage",
     "mypy",
     "punit (>=1.10.8)",

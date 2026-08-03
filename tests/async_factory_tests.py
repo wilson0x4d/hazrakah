@@ -29,6 +29,7 @@ class _AsyncIntResult:
     """Container for an async factory return value (hashable key for registration)."""
     pass
 
+
 class _SyncRegKey:
     """Marker type used only for registration key — never resolved."""
     pass

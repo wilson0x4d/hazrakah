@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 from abc import ABC
+import asyncio
+from contextvars import ContextVar
 from dataclasses import MISSING, fields
 from enum import IntEnum
 import inspect
+import logging
 import re
 import sys
-import asyncio
 import threading
 from types import NoneType, TracebackType, UnionType
 from typing import (
@@ -34,7 +36,7 @@ from .DependencyResolver import DependencyResolver, ScopedDependencyResolver
 
 T = TypeVar('T')
 _thread_local = threading.local()
-
+_resolver_chain = ContextVar[str]('__hrk_resolver_chain')
 
 def _await_or_block(result: Any) -> Any:
     """If *result* is a coroutine, block until it completes and return its value.
@@ -174,6 +176,7 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         namespace: Optional[str] = None,
     ) -> None:
         super().__setattr__('__frozen', False)
+        self.__logger = logging.getLogger(__name__)
         self.__self_resolve = self_resolve
         self.__singletons = {}
         self.__outer_scope = outer_scope
@@ -734,6 +737,7 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         * ``SINGLETON`` - creates or returns a shared instance per container scope.
         * ``TRANSIENT`` - creates and returns a new instance each time.
         """
+
         is_optional = isinstance(t, str) and t.startswith('Optional')
         origin = get_origin(t)
         if origin is Union or origin is UnionType:
@@ -759,7 +763,19 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
                 del _thread_local.namespace
 
         if registration is not None:
-            return self._dispatch_registration(t, registration, scope)  # type: ignore[arg-type]
+            prior_chain = _resolver_chain.get(None)
+            current_chain = (
+                f'resolution chain: {registration.t.__name__}'
+                if prior_chain is None
+                else f'{prior_chain} ⮆ {registration.t.__name__}'
+            )
+            chain_token = _resolver_chain.set(current_chain)
+            self.__logger.debug(current_chain)
+            try:
+                return self._dispatch_registration(t, registration, scope)  # type: ignore[arg-type]
+            finally:
+                if chain_token is not None:
+                    _resolver_chain.reset(chain_token)
 
         return self._fallback_resolve(t)
 
