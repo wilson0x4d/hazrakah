@@ -14,7 +14,7 @@ from hazrakah import (
     Target,
     provides,
 )
-from typing import Any, Optional, Protocol, Type, TypeVar, runtime_checkable
+from typing import Any, Optional, Protocol, Type, TypeVar, cast, runtime_checkable
 from punit import fact
 from punit.assertions.exceptions import raises
 
@@ -1016,3 +1016,252 @@ def resolve_all_three_interfaces_fail_when_self_resolve_false() -> None:
             lambda i=iface: c.resolve(i),  # type: ignore[misc]
             exact=True,
         )
+
+
+# ---- invoke tests ----
+
+
+class IFoo(Protocol):
+    def do_thing(self) -> str:
+        ...
+
+
+class FooImpl:
+
+    def __init__(self) -> None:
+        self.result: str = 'foo'
+
+    def do_thing(self) -> str:
+        return self.result
+
+
+class IBar(Protocol):
+    def calculate(self, a: int, b: int) -> int:
+        ...
+
+
+class BarImpl:
+
+    def __init__(self) -> None:
+        self.offset: int = 10
+
+    def calculate(self, a: int, b: int) -> int:
+        return a + b + self.offset
+
+
+class IBaz(Protocol):
+    pass
+
+
+class BazImpl:
+
+    def __init__(self) -> None:
+        self.value: int = 7
+
+
+@fact
+def invoke_calls_the_callable_and_returns_result() -> None:
+    """invoke returns the direct result of the callable."""
+
+    def add(x: int, y: int) -> int:
+        return x + y
+
+    c = Container()
+    c.register_instance(int, 3)  # type: ignore[arg-type]
+
+    result = c.invoke(add, x=2, y=5)  # type: ignore[return-value]
+    assert result == 7
+
+
+@fact
+def invoke_resolves_params_from_di() -> None:
+    """invoke resolves parameters via DI when kwargs are not provided."""
+
+    c = Container()
+    c.register_instance(IFoo, FooImpl())
+
+    calls: list[str] = []
+
+    def use_foo(foo: IFoo) -> str:
+        calls.append('called')
+        return foo.do_thing()
+
+    result = c.invoke(use_foo)
+    assert result == 'foo'
+    assert calls == ['called']
+
+
+@fact
+def invoke_kwargs_override_di() -> None:
+    """invoke uses kwarg values instead of resolving from DI."""
+
+    c = Container()
+    c.register_instance(IFoo, FooImpl())
+
+    class FakeFoo:
+        def do_thing(self) -> str:
+            return 'fake'
+
+    result = c.invoke(  # type: ignore[return-value]
+        lambda foo: foo.do_thing(),
+        foo=FakeFoo(),
+    )
+    assert result == 'fake'
+
+
+@fact
+def invoke_uses_default_when_di_resolution_fails() -> None:
+    """invoke falls back to parameter default when DI resolution fails."""
+
+    c = Container()
+
+    def greet(name: str = 'world') -> str:
+        return f'hello, {name}'
+
+    result = c.invoke(greet)
+    assert result == 'hello, world'
+
+
+@fact
+def invoke_uses_default_kwargs_over_di() -> None:
+    """invoke uses kwargs when present even if DI resolution would succeed."""
+
+    c = Container()
+    c.register_instance(str, 'di-value')  # type: ignore[arg-type]
+
+    result = c.invoke(  # type: ignore[return-value]
+        lambda name='fallback': f'hello, {name}',
+        name='kwarg',
+    )
+    assert result == 'hello, kwarg'
+
+
+@fact
+def invoke_raises_type_error_on_missing_annotation() -> None:
+    """invoke raises TypeError when a parameter lacks a type annotation."""
+
+    def untyped(x) -> str:  # type: ignore[empty-body]
+        return ''
+
+    c = Container()
+
+    assert raises[TypeError](
+        lambda: c.invoke(untyped),
+        exact=True,
+    )
+
+
+@fact
+def invoke_raises_resolution_error_for_unresolvable_required_param() -> None:
+    """invoke propagates ResolutionError when a required param cannot be resolved."""
+
+    c = Container()
+
+    def needs_baz(b: IBaz) -> int:  # type: ignore[empty-body]
+        value: int = getattr(b, 'value', -1)  # type: ignore[attr-defined]
+        return value
+
+    assert raises[ResolutionError](
+        lambda: c.invoke(needs_baz),
+        exact=True,
+    )
+
+
+@fact
+def invoke_with_class_target() -> None:
+    """invoke works with a class type as the target, resolving __init__ params."""
+
+    c = Container()
+    c.register_instance(IBar, BarImpl())
+
+    result = c.invoke(BarImpl)  # type: ignore[return-value]
+    assert isinstance(result, BarImpl)
+    assert result.offset == 10
+
+
+@fact
+def invoke_with_method_on_instance() -> None:
+    """invoke works with a bound method."""
+
+    foo = FooImpl()
+    c = Container()
+
+    result = c.invoke(foo.do_thing)
+    assert result == 'foo'
+
+
+@fact
+def invoke_with_namespace() -> None:
+    """invoke passes namespace to all resolve calls."""
+
+    class V1Baz(BazImpl):
+        def __init__(self) -> None:
+            self.value = 1
+
+    class V2Baz(BazImpl):
+        def __init__(self) -> None:
+            self.value = 2
+
+    c = Container()
+    c.register_instance(IBaz, V1Baz(), namespace='v1')
+    c.register_instance(IBaz, V2Baz(), namespace='v2')
+
+    def read_baz(b: IBaz) -> int:
+        return cast(Any, b).value  # type: ignore[attr-defined]
+
+    result_v1 = c.invoke(read_baz, namespace='v1')  # type: ignore[return-value]
+    result_v2 = c.invoke(read_baz, namespace='v2')  # type: ignore[return-value]
+    assert result_v1 == 1
+    assert result_v2 == 2
+
+
+@fact
+def invoke_returns_none_when_callable_returns_none() -> None:
+    """invoke returns None when the callable returns None."""
+
+    def no_op() -> None:  # type: ignore[empty-body]
+        pass
+
+    c = Container()
+    result: None = c.invoke(no_op)
+    assert result is None
+
+
+@fact
+def invoke_skips_var_positional_and_var_keyword() -> None:
+    """invoke skips *args and **kwargs parameters but still passes matching kwargs."""
+
+    def with_varargs(x: int, *args: int, y: int, **kwargs: str) -> tuple[int, tuple[int, ...], int, str, dict[str, str]]:
+        return (x, args, y, ', '.join(kwargs.values()), kwargs)
+
+    c = Container()
+    c.register_instance(int, 5)  # type: ignore[arg-type]
+
+    result = c.invoke(
+        with_varargs,
+        x=10,  # override auto-resolved x: int
+        y=99,
+        alpha='A',
+        beta='B',
+    )
+    assert result == (10, (), 99, 'A, B', {'alpha': 'A', 'beta': 'B'})
+
+
+@fact
+def invoke_mixed_di_and_kwargs() -> None:
+    """invoke resolves some params from DI and others from kwargs."""
+
+    c = Container()
+    c.register_instance(IFoo, FooImpl())
+    c.register_instance(int, 42)  # type: ignore[arg-type]
+
+    call_log: list[tuple[IFoo, int]] = []
+
+    def use_both(foo: IFoo, multiplier: int) -> str:
+        call_log.append((foo, multiplier))
+        return f'{foo.do_thing()} x {multiplier}'
+
+    result = c.invoke(use_both, multiplier=3)  # type: ignore[return-value]
+    assert result == 'foo x 3'
+    assert call_log[0][0].do_thing() == 'foo'
+    assert call_log[0][1] == 3

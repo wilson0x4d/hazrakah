@@ -9,11 +9,13 @@ from enum import IntEnum
 import inspect
 import re
 import sys
+import asyncio
 import threading
 from types import NoneType, TracebackType, UnionType
 from typing import (
     _SpecialForm,
     Any,
+    Callable,
     Iterable,
     Optional,
     Protocol,
@@ -22,8 +24,7 @@ from typing import (
     Union,
     cast,
     get_args,
-    get_origin,
-    overload
+    get_origin
 )
 
 from .RegistrationError import RegistrationError
@@ -33,6 +34,27 @@ from .DependencyResolver import DependencyResolver, ScopedDependencyResolver
 
 T = TypeVar('T')
 _thread_local = threading.local()
+
+
+def _await_or_block(result: Any) -> Any:
+    """If *result* is a coroutine, block until it completes and return its value.
+
+    When no event loop is running :py:func:`asyncio.run` is used directly.
+    When a loop is already running the coroutine is executed inside a
+    dedicated thread that owns its own event loop, avoiding deadlock.
+
+    Non-coroutine values pass through unchanged.
+    """
+    if not asyncio.iscoroutine(result):
+        return result
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(result)
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(asyncio.run, result)
+        return future.result()
 
 
 class Lifetime(IntEnum):
@@ -251,7 +273,7 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
             instance = self.__resolve(cast(Type[T], registration.target))
         else:
             factory = registration.target
-            instance = factory(self)
+            instance = _await_or_block(factory(self))
         owner: Container = scope if scope is not None else self
         tracked = getattr(owner, '_Container__tracked', None)  # type: ignore[attr-defined]
         if tracked is not None:
@@ -827,6 +849,90 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
                     )
 
         return self
+
+    def invoke(
+        self,
+        target: Callable[..., Any],
+        namespace: str | None = None,
+        **kwargs: Any,
+    ) -> Any | None:
+        """
+        Invoke a callable with dependency injection for each unsupplied parameter.
+
+        Resolves each parameter of *target* via ``resolve``, unless the parameter
+        name is already supplied via ``kwargs``.  Parameters without type annotations
+        raise ``TypeError``.  Resolution failures fall back to the parameter's
+        default value; if no default exists the exception propagates unchanged.
+
+        :param target: A callable whose parameters should be resolved via DI.
+        :param namespace: (Optional) Namespace to use for ``resolve`` calls.
+        :param kwargs: Override values for individual parameters by name.
+        :returns: The result returned by *target*.
+        :raises TypeError: If a parameter is missing a type annotation.
+        :raises ResolutionError: If a required parameter cannot be resolved and has no default.
+        """
+        sig = inspect.signature(target)
+        positional_args: list[Any] = []
+        keyword_kwargs: dict[str, Any] = {}
+        has_kwargs_param = False
+
+        # Identify which params accept extra kwargs
+        for name, param in sig.parameters.items():
+            if param.kind == inspect.Parameter.VAR_KEYWORD:
+                has_kwargs_param = True
+                break
+
+        remaining_kwargs: dict[str, Any] = dict(kwargs)
+
+        for name, param in sig.parameters.items():
+            if param.kind == inspect.Parameter.VAR_KEYWORD:
+                continue
+            if param.kind == inspect.Parameter.VAR_POSITIONAL:
+                continue
+
+            if name not in kwargs:
+                if param.annotation is inspect.Parameter.empty:
+                    raise TypeError(
+                        f'Cannot invoke {target.__name__!r}; '
+                        f'parameter {name!r} is missing a type annotation.'
+                    )
+                dep_type = self.__unwrap_forward_ref(param.annotation, cast(Type[Any], target))
+
+                # For intrinsic types with defaults that aren't explicitly registered,
+                # skip DI resolution so the parameter's default takes priority.
+                registrations = getattr(self, '_Container__registrations', {})
+                is_explicitly_registered = dep_type not in registrations
+
+                if (self.__is_intrinsic_type(dep_type)
+                        and is_explicitly_registered
+                        and param.default is not inspect.Parameter.empty):
+                    resolved = param.default
+                else:
+                    if dep_type is Any:
+                        continue
+                    try:
+                        resolved = self.resolve(dep_type, namespace=namespace)
+                    except ResolutionError:
+                        if param.default is not inspect.Parameter.empty:
+                            resolved = param.default
+                        else:
+                            raise
+            else:
+                resolved = kwargs[name]
+                remaining_kwargs.pop(name, None)
+
+            if param.kind == inspect.Parameter.POSITIONAL_ONLY:
+                positional_args.append(resolved)
+            elif param.kind in (
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
+            ):
+                keyword_kwargs[name] = resolved
+
+        if has_kwargs_param:
+            keyword_kwargs.update(remaining_kwargs)
+
+        return target(*positional_args, **keyword_kwargs)
 
     def create_scope(
         self,

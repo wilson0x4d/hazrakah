@@ -298,7 +298,7 @@ async def timedelta_ttl_zero_expires_immediately() -> None:
 
     cached = Cached(factory, ttl=timedelta(0))  # type: ignore[arg-type]
     a = cached(_resolver_mock)  # type: ignore[arg-type]
-    await asyncio.sleep(2)
+    await asyncio.sleep(0.1)
     b = cached(_resolver_mock)  # type: ignore[arg-type]
     assert a is not b
     assert call_count == 2
