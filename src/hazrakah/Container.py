@@ -13,7 +13,7 @@ import logging
 import re
 import sys
 import threading
-from types import NoneType, TracebackType, UnionType
+from types import ModuleType, NoneType, TracebackType, UnionType
 from typing import (
     _SpecialForm,
     Any,
@@ -211,15 +211,26 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         :return: A Type matching the annotation.
         """
         if isinstance(annotation, str):
-            globals_ = getattr(owner, '__globals__', {})
-            if not globals_:
-                globals_ = globals()
+            globals_ = getattr(owner, '__globals__', {}) or globals()
             try:
-                return eval(annotation, globals_, {})
+                resolved = eval(annotation, globals_, {})
+                # Only reject results that are modules or plain non-type
+                # objects (like `None` or a module bound to the name).
+                # Union types, generics, etc. should pass through unchanged
+                # so that `Optional[T]` is still properly resolved.
+                if resolved is not None and not isinstance(resolved, type):
+                    if isinstance(resolved, ModuleType):
+                        resolved = annotation
+                return resolved
             except Exception:
-                mod = sys.modules[owner.__module__]
-                if hasattr(mod, annotation):
-                    return getattr(mod, annotation)
+                mod = sys.modules.get(owner.__module__)
+                if mod is not None and hasattr(mod, annotation):
+                    candidate = getattr(mod, annotation)
+                    if candidate is not None and isinstance(candidate, ModuleType):
+                        return annotation
+                    if candidate is not None and isinstance(candidate, type):
+                        return candidate
+                    return annotation
         return annotation
 
     @staticmethod
