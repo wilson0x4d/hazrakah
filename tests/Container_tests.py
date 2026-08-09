@@ -828,6 +828,15 @@ def register_decorated_returns_self() -> None:
 
 
 @fact
+def resolve_container_returns_self() -> None:
+    """"Resolving for ``DependencyRegistry`` returns the container itself."""
+
+    c1: Container = Container()
+    result: Container = c1.resolve(Container)  # type: ignore[arg-type, type-abstract]
+    assert result is c1, 'resolve(Container) should return self'
+
+
+@fact
 def resolve_dependency_registry_returns_self() -> None:
     """"Resolving for ``DependencyRegistry`` returns the container itself."""
 
@@ -960,6 +969,7 @@ def resolve_interface_fails_when_self_resolve_false() -> None:
 
     c = Container(self_resolve=False)
 
+    assert raises[ResolutionError](lambda: c.resolve(Container))  # type: ignore[arg-type, type-abstract]
     assert raises[ResolutionError](lambda: c.resolve(DependencyRegistry))  # type: ignore[arg-type, type-abstract]
     assert raises[ResolutionError](lambda: c.resolve(DependencyResolver))  # type: ignore[arg-type, type-abstract]
     assert raises[ResolutionError](lambda: c.resolve(ScopedDependencyResolver))  # type: ignore[arg-type, type-abstract]

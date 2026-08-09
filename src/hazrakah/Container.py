@@ -512,11 +512,12 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
 
     def _fallback_resolve(self, t: Type[Any]) -> Any:
         """Handle fallback resolution: concrete auto-reg, self-resolve, or error."""
-        if self.__is_concrete(t):
+        if t in (Container, DependencyRegistry, DependencyResolver, ScopedDependencyResolver):
+            if self.__self_resolve is True:
+                return cast(Any, self)
+        elif self.__is_concrete(t):
             self.register_transient(t)
             return self.resolve(t)
-        if self.__self_resolve is True and t in (DependencyRegistry, DependencyResolver, ScopedDependencyResolver):
-            return cast(Any, self)
         raise ResolutionError(f'No registration found for {t!r}')
 
     def _dispatch_registration(self, t: Type[Any], registration: Registration, scope: Container) -> Any:
