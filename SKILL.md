@@ -12,6 +12,19 @@ type: reference
 
 ---
 
+## ⚠️ CRITICAL: Resolution does NOT require registration
+
+**Types do NOT need to be registered into the container to be resolved.** `resolve()` can be called on ANY type at any time, with or without prior registration. This is the default and primary way to instantiate types.
+
+```python
+c = Container()
+svc: SomeUnregisteredType = c.resolve(SomeUnregisteredType)  # ← this works, hazrakah auto-wires constructor deps
+```
+
+`register_decorated()` and manual registration methods are **edge-case approaches**, NOT the standard pattern. Never assume a type must be registered before calling `resolve()`.
+
+---
+
 ## Table of Contents
 
 1. [What is `Container`](#what-is-container)
