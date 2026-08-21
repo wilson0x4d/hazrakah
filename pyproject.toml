@@ -19,8 +19,9 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "hanaro (>=1.3.2)",
+    "build",
     "coverage",
+    "hanaro (>=1.3.2)",
     "mypy",
     "punit (>=1.13.9)",
     "py-conventional-semver (>=1.3.4)",
