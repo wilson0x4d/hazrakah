@@ -155,10 +155,10 @@ child registrations:
 Each scope only walks outward toward ancestors, never downward toward descendants.
 
 
-Singleton Lifecycle Across Scopes
+Singleton Lifetime Across Scopes
 ---------------------------------
 
-Singletons follow strict per-container lifecycle rules:
+Singletons follow strict per-container lifetime rules:
 
 1. A singleton registered in the parent is shared across all child scopes.
 2. A singleton registered in a child is local to that child and its descendants.

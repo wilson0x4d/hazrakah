@@ -156,7 +156,7 @@ def register_transient_with_provides_creates_new_instances():
 
 
 @fact
-def provides_without_lifecycle_decorator_via_mutations_works():
+def provides_without_lifetime_decorator_via_mutations_works():
     """Standalone @provides works when registered via mutation methods."""
 
     class IFoo(Protocol):
@@ -284,7 +284,7 @@ def provides_empty_is_backward_compatible():
 
 
 @fact
-def provides_does_not_set_lifecycle_attribute():
+def provides_does_not_set_lifetime_attribute():
 
     class IFoo(Protocol):
         def foo(self) -> None:
@@ -294,7 +294,7 @@ def provides_does_not_set_lifecycle_attribute():
     class MyClass:
         pass
 
-    assert not hasattr(MyClass, '__hazrakah_lifecycle')
+    assert not hasattr(MyClass, '__hazrakah_lifetime')
 
 
 @fact
@@ -344,7 +344,7 @@ def provides_with_fluent_chaining_works():
 
 @fact
 def provides_without_lifetime_decorator_must_not_crash_register_decorated():
-    """Orphan @provides (no lifecycle decorator) is safe during register_decorated."""
+    """Orphan @provides (no lifetime decorator) is safe during register_decorated."""
     _reset_decorations()
 
     class IFoo(Protocol):

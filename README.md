@@ -30,7 +30,7 @@ You can install `hazrakah` from [PyPI](https://pypi.org/project/hazrakah/) throu
 
 ### Core lifetimes — Transient, Singleton, Instance
 
-`hazrakah` manages object lifecycles through three registration strategies:
+`hazrakah` manages object lifetimes through three registration strategies:
 
 ```python
 from hazrakah import Container

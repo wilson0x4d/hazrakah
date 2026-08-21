@@ -41,7 +41,7 @@ class DecorationInfo:
     """
     Metadata emitted by a decorator for one interface of the decorated target.
 
-    :ivar lifetime: The lifecycle type (singleton, transient, or instance).
+    :ivar lifetime: The lifetime type (singleton, transient, or instance).
     :ivar target: The original callable / class that was decorated.
     :ivar interface: The single interface this entry registers for.
     :ivar depends_on: Ordering hints -- references to other registered interfaces.
@@ -108,14 +108,14 @@ class _DecorationInfoManager:
         cls.__store.clear()
 
 
-_HAZRAKAH_LIFECYCLE_ATTR = '__hazrakah_lifecycle'
+_HAZRAKAH_LIFETIME_ATTR = '__hazrakah_lifetime'
 
 
 def _raise_if_provides_decorated(unwrapped: Any) -> None:
     if hasattr(unwrapped, '__hazrakah_provides'):
         raise RegistrationError(
             f'cannot apply ``@{unwrapped.__name__}`` to a class already decorated with ``@provides``. '
-            'Use either a lifecycle decorator (@singleton/@transient/@instanced) OR @provides — not both.'
+            'Use either a lifetime decorator (@singleton/@transient/@instanced) OR @provides — not both.'
         )
 
 
@@ -262,7 +262,7 @@ def singleton(
         )
         _DecorationInfoManager.instance().register(info_entry)
 
-    setattr(unwrapped, _HAZRAKAH_LIFECYCLE_ATTR, Lifetime.SINGLETON)
+    setattr(unwrapped, _HAZRAKAH_LIFETIME_ATTR, Lifetime.SINGLETON)
     return target  # type: ignore[return-value]
 
 
@@ -327,7 +327,7 @@ def transient(
         )
         _DecorationInfoManager.instance().register(info_entry)
 
-    setattr(unwrapped, _HAZRAKAH_LIFECYCLE_ATTR, Lifetime.TRANSIENT)
+    setattr(unwrapped, _HAZRAKAH_LIFETIME_ATTR, Lifetime.TRANSIENT)
     return target  # type: ignore[return-value]
 
 
@@ -391,7 +391,7 @@ def instanced(
         )
         _DecorationInfoManager.instance().register(info_entry)
 
-    setattr(unwrapped, _HAZRAKAH_LIFECYCLE_ATTR, Lifetime.INSTANCE)
+    setattr(unwrapped, _HAZRAKAH_LIFETIME_ATTR, Lifetime.INSTANCE)
     return target  # type: ignore[return-value]
 
 

@@ -349,7 +349,7 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
 
         :param t: The type being solved for.
         :param registration: The registration details.
-        :param scope: (OPTIONAL) The Container that owns this instance for lifecycle tracking.
+        :param scope: (OPTIONAL) The Container that owns this instance for lifetime tracking.
                        Defaults to ``self`` when not provided.
         :raises RegistrationError: When the registration is malformed and instancing is not possible.
         :return: An instance of *T*.

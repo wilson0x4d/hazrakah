@@ -18,7 +18,7 @@ Usage
 Core lifetimes — Transient, Singleton, Instance
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``hazrakah`` manages object lifecycles through three registration strategies:
+``hazrakah`` manages object lifetimes through three registration strategies:
 
 .. code-block:: python
 

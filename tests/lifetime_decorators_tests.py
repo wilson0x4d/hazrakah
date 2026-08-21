@@ -124,24 +124,24 @@ def manager_tracks_registrations() -> None:
 
 
 @fact
-def singleton_class_no_parens_marks_lifecycle() -> None:
+def singleton_class_no_parens_marks_lifetime() -> None:
 
     @singleton
     class PlainClass:
         pass
 
-    assert hasattr(PlainClass, '__hazrakah_lifecycle')
-    assert getattr(PlainClass, '__hazrakah_lifecycle') is Lifetime.SINGLETON
+    assert hasattr(PlainClass, '__hazrakah_lifetime')
+    assert getattr(PlainClass, '__hazrakah_lifetime') is Lifetime.SINGLETON
 
 
 @fact
-def singleton_class_with_parens_marks_lifecycle() -> None:
+def singleton_class_with_parens_marks_lifetime() -> None:
 
     @singleton()  # type: ignore[operator]  # noqa: F811
     class PlainClass2:
         pass
 
-    assert getattr(PlainClass2, '__hazrakah_lifecycle') is Lifetime.SINGLETON
+    assert getattr(PlainClass2, '__hazrakah_lifetime') is Lifetime.SINGLETON
 
 
 @fact
@@ -205,7 +205,7 @@ def transient_class_marks_transient() -> None:
     class TransClass:
         pass
 
-    assert getattr(TransClass, '__hazrakah_lifecycle') is Lifetime.TRANSIENT
+    assert getattr(TransClass, '__hazrakah_lifetime') is Lifetime.TRANSIENT
 
 
 @fact
@@ -218,7 +218,7 @@ def instanced_class_marks_instance() -> None:
     class InstClass:
         pass
 
-    assert getattr(InstClass, '__hazrakah_lifecycle') is Lifetime.INSTANCE
+    assert getattr(InstClass, '__hazrakah_lifetime') is Lifetime.INSTANCE
 
 
 @fact
@@ -259,7 +259,7 @@ def multiple_same_lifetime_valid() -> None:
     class SameLifetime2(SameLifetime1):
         pass
 
-    assert getattr(SameLifetime1, '__hazrakah_lifecycle') is Lifetime.SINGLETON
+    assert getattr(SameLifetime1, '__hazrakah_lifetime') is Lifetime.SINGLETON
 
 
 @fact

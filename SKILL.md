@@ -1,6 +1,6 @@
 ---
 name: hazrakah
-description: Zero-dependency dependency injection framework for Python 3.11+ — Container lifecycle, registration, resolution, scopes, decorators, teardown, Cached[T], and error handling. Use as a technical reference document for hazrakah API and concepts.
+description: Zero-dependency dependency injection framework for Python 3.11+ — Container lifetime, registration, resolution, scopes, decorators, teardown, Cached[T], and error handling. Use as a technical reference document for hazrakah API and concepts.
 user-invocable: true
 disable-model-invocation: false
 type: reference
@@ -328,7 +328,7 @@ class MyLogger: ...
 
 ### `@provides(*interfaces)`
 
-Multi-registration without lifecycle decorators. A single instance is registered under the class name **and** under all provided interfaces:
+Multi-registration without lifetime decorators. A single instance is registered under the class name **and** under all provided interfaces:
 
 ```python
 from hazrakah import provides
@@ -345,7 +345,7 @@ b = c.resolve(IBar)
 assert a is b  # same instance
 ```
 
-**Note**: `@provides` is bypassed when a second argument is supplied: `register_singleton(IFoo, Impl)` does NOT use `@provides`. Mutually exclusive with lifecycle decorators (`@singleton`, `@transient`, `@instanced`).
+**Note**: `@provides` is bypassed when a second argument is supplied: `register_singleton(IFoo, Impl)` does NOT use `@provides`. Mutually exclusive with lifetime decorators (`@singleton`, `@transient`, `@instanced`).
 
 ---
 
@@ -423,7 +423,7 @@ except ResolutionError:
 
 | Error | Cause |
 |---|---|
-| `RegistrationError` | Frozen container, invalid factory signature, mixing `@provides` with lifecycle decorators, missing `types=` on factory decorator |
+| `RegistrationError` | Frozen container, invalid factory signature, mixing `@provides` with lifetime decorators, missing `types=` on factory decorator |
 | `ResolutionError` | Unregistered abstract/protocol type, multiple distinct targets in a non-optional union, zero-match union |
 
 ---

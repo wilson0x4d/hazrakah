@@ -16,7 +16,7 @@ Activation depends entirely on how the container later registers the decorated c
 - If you call ``register_singleton(IFoo, MyClass)`` (with an explicit type override),
   @provides is **completely bypassed** -- only IFoo is registered.
 
-@provides must NOT be combined with lifecycle decorators (@singleton, @transient,
+@provides must NOT be combined with lifetime decorators (@singleton, @transient,
 @instanced) on the same class -- those are mutually exclusive by design.
 """
 
@@ -31,10 +31,10 @@ T = TypeVar('T')
 
 
 def _raise_if_lifetime_decorated(unwrapped: Any) -> None:
-    if hasattr(unwrapped, '__hazrakah_lifecycle'):
+    if hasattr(unwrapped, '__hazrakah_lifetime'):
         raise RegistrationError(
             f'cannot apply ``@{unwrapped.__name__}`` to a class already decorated with ``@provides``. '
-            'Use either a lifecycle decorator (@singleton/@transient/@instanced) OR @provides — not both.'
+            'Use either a lifetime decorator (@singleton/@transient/@instanced) OR @provides — not both.'
         )
 
 
