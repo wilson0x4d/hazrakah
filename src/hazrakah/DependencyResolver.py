@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Protocol, Type, TypeVar, runtime_checkable
+from typing import Iterable, Protocol, Type, TypeVar, runtime_checkable
 
 
 T = TypeVar('T')

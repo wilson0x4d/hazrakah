@@ -14,7 +14,7 @@ type: reference
 
 ## ⚠️ CRITICAL: Resolution does NOT require registration
 
-**Types do NOT need to be registered into the container to be resolved.** `resolve()` can be called on ANY type at any time, with or without prior registration. This is the default and primary way to instantiate types.
+**Types do NOT need to be registered into the container to be resolved.** `resolve()` can be called on ANY type at any time, without pre-registering the type. This is the default and primary way to instantiate types. The only reason for explicit registration is to control the lifetime semantics to to assert fine-grained control over instanciation (such as type aliasing or factory functions.)
 
 ```python
 c = Container()

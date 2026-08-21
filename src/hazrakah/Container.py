@@ -100,9 +100,10 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
     """
     A dependency-injection container that supports hierarchical scopes and deterministic destruction.
 
-    Containers track every object they directly instantiate (via ``__create_instance``) in an internal
-    ``set``. When a container is used as a context manager (either directly or via ``create_scope()``,
-    all tracked objects are torn down by calling their ``close()`` method at the end of the scope.
+    NOTE: It is **NOT** necessary to pre-register a type with a Container, **hazrakah** will resolve
+    any type whether or not it is registered with a Container.  The only practical reason to pre-register
+    a type is to assert finer-grained control over instanciation; ie. for specifying lifetime semantics,
+    aliasing types, or to configure a factory function.
 
     Example (Basic)
     ---------------

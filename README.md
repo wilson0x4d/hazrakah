@@ -9,6 +9,7 @@ This README is only a high-level introduction to **hazrakah**. For more detailed
 ## Features
 
 - Supports Singleton, Transient, and Instance lifetimes.
+- **Resolve Types without Registration**; Container resolves types even when not explicitly registered, unlike typical pythonic DI containers.
 - **Hierarchical scoping**; Isolate registrations and/or resolves. optionally use a context manager to deterministically tear down a scope and its resolved objects.
 - **Namespaced Registrations**; Register types into named scopes and resolve with priority chains. Allows multiple implementations of the same interface to coexist.
 - **Protocols, ABCs, and Concretes** can be registered against **Factory Functions and Concretes**.
