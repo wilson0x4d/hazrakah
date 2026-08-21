@@ -16,3 +16,5 @@ test_data/
 tmp/
 .coverage
 *cov/
+uv.lock
+.python-version

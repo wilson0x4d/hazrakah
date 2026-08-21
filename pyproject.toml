@@ -11,20 +11,19 @@ license = "MIT"
 classifiers = [
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
-    "Programming Language :: Python",
-    "Topic :: Software Development :: Libraries :: Python Modules"
+    "Programming Language :: Python"
 ]
 requires-python = ">=3.11"
 dependencies = [
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "hanaro (>=1.3.2)",
     "coverage",
     "mypy",
-    "punit (>=1.10.8)",
-    "py-conventional-semver",
+    "punit (>=1.13.9)",
+    "py-conventional-semver (>=1.3.4)",
     "twine"
 ]
 
@@ -35,3 +34,6 @@ Repository = "https://github.com/wilson0x4d/hazrakah.git"
 
 [tool.setuptools.package-data]
 "hazrakah" = ["py.typed", "SKILL.md"]
+
+[tool.uv]
+package = true
