@@ -133,9 +133,11 @@ def ttl_zero_causes_always_miss() -> None:
 
     cached = Cached(factory, ttl=timedelta(seconds=0))  # type: ignore[arg-type]
     first = cached(_resolver_mock)  # type: ignore[arg-type]
+    time.sleep(0.1)
     second = cached(_resolver_mock)  # type: ignore[arg-type]
+    time.sleep(0.1)
     third = cached(_resolver_mock)  # type: ignore[arg-type]
-    assert call_count == 3
+    assert call_count == 3, f'expected 3 got {call_count}'
 
 
 @fact

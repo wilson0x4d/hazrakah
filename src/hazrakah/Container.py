@@ -38,26 +38,6 @@ T = TypeVar('T')
 _thread_local = threading.local()
 _resolver_chain = ContextVar[str]('__hrk_resolver_chain')
 
-def _await_or_block(result: Any) -> Any:
-    """If *result* is a coroutine, block until it completes and return its value.
-
-    When no event loop is running :py:func:`asyncio.run` is used directly.
-    When a loop is already running the coroutine is executed inside a
-    dedicated thread that owns its own event loop, avoiding deadlock.
-
-    Non-coroutine values pass through unchanged.
-    """
-    if not asyncio.iscoroutine(result):
-        return result
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(result)
-    import concurrent.futures
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(asyncio.run, result)
-        return future.result()
-
 
 class Lifetime(IntEnum):
     TRANSIENT = 1
@@ -129,8 +109,8 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
 
         container = (
             Container()
-            .register_singleton(Greeter, GreeterImpl)
-            .register_transient(Formatter)
+            .register_decorator(CombinedImpl)  # registers both IDatabase & ILogger
+            .register_transient(ConsoleLogger)
         )
         greeter = c.resolve(Greeter)
 
@@ -151,12 +131,30 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
             bar = container.resolve(Bar)  # raises Error (not in scope)
             assert foo.is_closed is True  # context manager scope closes
 
+    Example (Async Context Manager)
+    -------------------------------
+
+    The container can also be used as an **async** context manager. This is recommended
+    when tracked instances expose ``async close()`` methods, as the coroutine is awaited
+    without blocking a running event loop:
+
+
+    .. code:: python
+
+        async with Container() as container:
+            container.register_transient(AioResource)
+            res = container.resolve(AioResource)
+
+        # res.close() is awaited asynchronously on exit.
+
     :ivar outer_scope: The parent container, or ``None`` for the root.
     :vartype outer_scope: Optional[Container]
 
 
     .. automethod:: __enter__
     .. automethod:: __exit__
+    .. automethod:: __aenter__
+    .. automethod:: __aexit__
     """
 
     __self_resolve: bool
@@ -175,22 +173,24 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         frozen: bool = False,
         self_resolve: bool = True,
         namespace: Optional[str] = None,
+        autoclose: bool = True
     ) -> None:
         super().__setattr__('__frozen', False)
         self.__logger = logging.getLogger(__name__)
-        self.__self_resolve = self_resolve
+        self.__self_resolve = self_resolve is not False
         self.__singletons = {}
         self.__outer_scope = outer_scope
         self.__registrations = {}
         self.__tracked: set[Any] = set()
         self.__namespaces = {}
+        self.__autoclose = autoclose is not False
         super().__setattr__('__namespace', namespace)
 
         class _proto(Protocol):
             pass
         self.__proto_co_code = _proto.__init__.__code__.co_code
 
-        super().__setattr__('__frozen', frozen is True)
+        super().__setattr__('__frozen', frozen is not False)
 
     def __setattr__(self, name: str, value: Any):
         if getattr(self, '__frozen'):
@@ -338,6 +338,26 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
                 f'While creating a registration for {t!r}'
             )
 
+    def __await_or_block(self, result: Any) -> Any:
+        """If *result* is a coroutine, block until it completes and return its value.
+
+        When no event loop is running :py:func:`asyncio.run` is used directly.
+        When a loop is already running the coroutine is executed inside a
+        dedicated thread that owns its own event loop, avoiding deadlock.
+
+        Non-coroutine values pass through unchanged.
+        """
+        if not asyncio.iscoroutine(result):
+            return result
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(result)
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(asyncio.run, result)
+            return future.result()
+
     def __create_instance(
         self,
         t: Type[T],
@@ -363,7 +383,7 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
             instance = self.__resolve(cast(Type[T], registration.target))
         else:
             factory = registration.target
-            instance = _await_or_block(factory(self))
+            instance = self.__await_or_block(factory(self))
         owner: Container = scope if scope is not None else self
         tracked = getattr(owner, '_Container__tracked', None)  # type: ignore[attr-defined]
         if tracked is not None:
@@ -1043,12 +1063,14 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         frozen: Optional[bool] = None,
         self_resolve: Optional[bool] = None,
         namespace: Optional[str] = None,
+        autoclose: Optional[bool] = None,
     ) -> Container:
         child = Container(
             outer_scope=self,
             frozen=frozen if frozen is not None else (getattr(self, '__frozen') if getattr(self, '__frozen', None) is not None else False),
             self_resolve=self_resolve if self_resolve is not None else self.__self_resolve,
             namespace=namespace,
+            autoclose=autoclose if autoclose is not None else self.__autoclose,
         )
         if namespace is not None:
             self.__namespaces[namespace] = child
@@ -1081,14 +1103,18 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         torn down by calling its ``close()`` method, if present. The tracked set is then cleared so
         no object is double-cleaned.
 
+        If ``close()`` returns a coroutine, it is awaited synchronously using ``self.__await_or_block``.
+
         :param exc_type: (OPTIONAL) Exception type, if one was raised inside the ``with`` block.
         :param exc_val: (OPTIONAL) The exception instance, if one was raised.
         :param exc_tb: (OPTIONAL) Traceback object, if one was raised.
         """
         for obj in getattr(self, '_Container__tracked', set()):  # type: ignore[attr-defined]
             close = getattr(obj, 'close', None)
-            if close is not None:
-                close()
+            if self.__autoclose and close is not None:
+                result = close()
+                if asyncio.iscoroutine(result):
+                    self.__await_or_block(result)
         tracked = getattr(self, '_Container__tracked', None)  # type: ignore[attr-defined]
         if tracked is not None:
             tracked.clear()
@@ -1098,10 +1124,38 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         for obj in getattr(self, '_Container__tracked', []):  # type: ignore[attr-defined]
             try:
                 close = getattr(obj, 'close', None)
-                if close is not None:
-                    close()
+                if self.__autoclose and close is not None:
+                    result = close()
+                    if asyncio.iscoroutine(result):
+                        self.__await_or_block(result)
             except Exception:
                 pass
+        tracked = getattr(self, '_Container__tracked', None)  # type: ignore[attr-defined]
+        if tracked is not None:
+            tracked.clear()
+
+    async def __aenter__(self) -> Container:
+        """Return *self* to enable async context manager usage."""
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],  # type: ignore[name-defined]
+    ) -> None:
+        """
+        Async teardown of tracked instances.
+
+        Equivalent to ``__exit__`` but awaits coroutine ``close()`` methods
+        without blocking a running event loop.
+        """
+        for obj in getattr(self, '_Container__tracked', set()):  # type: ignore[attr-defined]
+            close = getattr(obj, 'close', None)
+            if self.__autoclose and close is not None:
+                result = close()
+                if asyncio.iscoroutine(result):
+                    await result
         tracked = getattr(self, '_Container__tracked', None)  # type: ignore[attr-defined]
         if tracked is not None:
             tracked.clear()

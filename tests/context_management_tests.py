@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import gc
 
 from hazrakah import Container
@@ -187,3 +188,183 @@ def del_fallback_calls_close_on_tracked_instances() -> None:
     gc.collect()
 
     assert resource.closed, '__del__ should have called close() on tracked instances.'
+
+
+class AsyncCloseableResource:
+    """A resource that exposes an async ``close`` method."""
+
+    closed: bool = False
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+@fact
+def async_close_awaited_in_sync_exit() -> None:
+    """When a tracked object has an async close(), __exit__ must await it via _await_or_block."""
+    container = Container()
+    container.register_transient(AsyncCloseableResource)
+    instance = container.resolve(AsyncCloseableResource)
+    assert isinstance(instance, AsyncCloseableResource), 'instance should be AsyncCloseableResource'
+    assert not instance.closed, 'instance should not be closed yet'
+
+    with container:
+        pass
+
+    assert instance.closed, 'Async close() must be awaited during sync __exit__.'
+
+
+@fact
+def async_close_awaited_in_del() -> None:
+    """When a tracked object has an async close(), __del__ must await it via _await_or_block."""
+    resource = AsyncCloseableResource()
+
+    container = Container()
+    container.register_transient(AsyncCloseableResource, lambda _: resource)  # type: ignore[arg-type]
+    _ = container.resolve(AsyncCloseableResource)
+
+    del container
+    gc.collect()
+
+    assert resource.closed, '__del__ should have awaited async close() on tracked instances.'
+
+
+@fact
+async def async_context_manager_awaits_close() -> None:
+    """Async context manager must use __aexit__ which awaits coroutine close() methods."""
+    async with Container() as container:
+        container.register_transient(AsyncCloseableResource)
+        instance = container.resolve(AsyncCloseableResource)
+        assert not instance.closed, 'instance should not be closed while inside context'
+
+    assert instance.closed, 'Async __aexit__ must await async close() methods.'
+
+
+@fact
+async def async_context_manager_clears_tracked() -> None:
+    """Async context manager must clear tracked set after teardown."""
+    async with Container() as container:
+        container.register_transient(AsyncCloseableResource)
+        _ = container.resolve(AsyncCloseableResource)
+
+
+class ManualCloseableResource:
+    """A resource that tracks whether close() was called."""
+
+    closed: bool = False
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+@fact
+def autoclose_false_prevents_close_in_sync_exit() -> None:
+    """When autoclose=False, close() must NOT be called on tracked instances during __exit__."""
+    container = Container(autoclose=False)
+    container.register_transient(ManualCloseableResource)
+    instance = container.resolve(ManualCloseableResource)
+    assert not instance.closed, 'should not be closed yet'
+
+    with container:
+        pass
+
+    assert not instance.closed, 'autoclose=False must prevent close() from being called in __exit__.'
+
+
+@fact
+def autoclose_false_prevents_close_in_del() -> None:
+    """When autoclose=False, close() must NOT be called on tracked instances during __del__."""
+    resource = ManualCloseableResource()
+
+    container = Container(autoclose=False)
+    container.register_transient(ManualCloseableResource, lambda _: resource)  # type: ignore[arg-type]
+    _ = container.resolve(ManualCloseableResource)
+
+    del container
+    gc.collect()
+
+    assert not resource.closed, 'autoclose=False must prevent close() from being called in __del__.'
+
+
+@fact
+async def autoclose_false_prevents_close_in_async_exit() -> None:
+    """When autoclose=False, close() must NOT be called on tracked instances during __aexit__."""
+    async with Container(autoclose=False) as container:
+        container.register_transient(ManualCloseableResource)
+        instance = container.resolve(ManualCloseableResource)
+        assert not instance.closed, 'should not be closed while inside context'
+
+    assert not instance.closed, 'autoclose=False must prevent close() from being called in __aexit__.'
+
+
+@fact
+def autoclose_default_true_destroys_tracked() -> None:
+    """autoclose defaults to True, so tracked instances are closed by default."""
+    container = Container()
+    container.register_transient(ManualCloseableResource)
+    instance = container.resolve(ManualCloseableResource)
+
+    with container:
+        pass
+
+    assert instance.closed, 'default autoclose=True must close tracked instances.'
+
+
+@fact
+def autoclose_explicit_true_destroys_tracked() -> None:
+    """Explicit autoclose=True must close tracked instances."""
+    container = Container(autoclose=True)
+    container.register_transient(ManualCloseableResource)
+    instance = container.resolve(ManualCloseableResource)
+
+    with container:
+        pass
+
+    assert instance.closed, 'autoclose=True must close tracked instances.'
+
+
+@fact
+def autoclose_false_inherited_by_scope_by_default() -> None:
+    """autoclose=False on a parent is inherited by child scopes by default."""
+    parent = Container(autoclose=False)
+
+    child = parent.create_scope()
+    child.register_transient(ManualCloseableResource)
+    child_instance = child.resolve(ManualCloseableResource)
+
+    with child:
+        pass
+
+    assert not child_instance.closed, 'autoclose=False inherited by scope must prevent close().'
+
+
+@fact
+def autoclose_false_override_on_scope() -> None:
+    """Child scope can override parent's autoclose=False with autoclose=True."""
+    parent = Container(autoclose=False)
+
+    child = parent.create_scope(autoclose=True)
+    child.register_transient(ManualCloseableResource)
+    child_instance = child.resolve(ManualCloseableResource)
+
+    with child:
+        pass
+
+    assert child_instance.closed, 'explicit autoclose=True on scope must close tracked instances.'
+
+
+@fact
+async def autoclose_false_with_async_closeable() -> None:
+    """autoclose=False with an async closeable must not attempt to await close()."""
+    async with Container(autoclose=False) as container:
+        container.register_transient(AsyncCloseableResource)
+        instance = container.resolve(AsyncCloseableResource)
+        assert not instance.closed, 'should not be closed inside context'
+
+    assert not instance.closed, 'autoclose=False must not call async close() either.'
