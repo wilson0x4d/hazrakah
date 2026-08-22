@@ -147,9 +147,9 @@ def close_propagates_exceptions_to_outer_scope() -> None:
 
     container = Container()
     try:
-        with container:
-            container.register_transient(BadResource, lambda _: bad_resource)  # type: ignore[arg-type]
-            container.resolve(BadResource)
+        with container as scoped:
+            scoped.register_transient(BadResource, lambda _: bad_resource)  # type: ignore[arg-type]
+            scoped.resolve(BadResource)
         assert False, 'Should have raised during __exit__'
     except RuntimeError as e:
         assert str(e) == 'close is broken'
@@ -167,11 +167,13 @@ def transitive_dependencies_are_all_destroyed() -> None:
 
 
 @fact
-def context_enter_returns_self() -> None:
-    """``__enter__`` must return the same Container instance."""
+def context_enter_returns_scope_not_self() -> None:
+    """``__enter__`` must return a child scope of the container."""
     ctx = Container()
     result = ctx.__enter__()
-    assert result is ctx, '__enter__ must return self.'
+    assert result is not ctx, '__enter__ must return a child scope, not self.'
+    assert getattr(result, '_Container__outer_scope') is ctx, 'Returned scope must have parent as outer_scope.'
+    ctx.__exit__(None, None, None)
 
 
 @fact
@@ -205,14 +207,11 @@ class AsyncCloseableResource:
 @fact
 def async_close_awaited_in_sync_exit() -> None:
     """When a tracked object has an async close(), __exit__ must await it via _await_or_block."""
-    container = Container()
-    container.register_transient(AsyncCloseableResource)
-    instance = container.resolve(AsyncCloseableResource)
-    assert isinstance(instance, AsyncCloseableResource), 'instance should be AsyncCloseableResource'
-    assert not instance.closed, 'instance should not be closed yet'
-
-    with container:
-        pass
+    with Container() as container:
+        container.register_transient(AsyncCloseableResource)
+        instance = container.resolve(AsyncCloseableResource)
+        assert isinstance(instance, AsyncCloseableResource), 'instance should be AsyncCloseableResource'
+        assert not instance.closed, 'instance should not be closed yet'
 
     assert instance.closed, 'Async close() must be awaited during sync __exit__.'
 
@@ -266,13 +265,10 @@ class ManualCloseableResource:
 @fact
 def autoclose_false_prevents_close_in_sync_exit() -> None:
     """When autoclose=False, close() must NOT be called on tracked instances during __exit__."""
-    container = Container(autoclose=False)
-    container.register_transient(ManualCloseableResource)
-    instance = container.resolve(ManualCloseableResource)
-    assert not instance.closed, 'should not be closed yet'
-
-    with container:
-        pass
+    with Container(autoclose=False) as container:
+        container.register_transient(ManualCloseableResource)
+        instance = container.resolve(ManualCloseableResource)
+        assert not instance.closed, 'should not be closed yet'
 
     assert not instance.closed, 'autoclose=False must prevent close() from being called in __exit__.'
 
@@ -306,12 +302,9 @@ async def autoclose_false_prevents_close_in_async_exit() -> None:
 @fact
 def autoclose_default_true_destroys_tracked() -> None:
     """autoclose defaults to True, so tracked instances are closed by default."""
-    container = Container()
-    container.register_transient(ManualCloseableResource)
-    instance = container.resolve(ManualCloseableResource)
-
-    with container:
-        pass
+    with Container() as container:
+        container.register_transient(ManualCloseableResource)
+        instance = container.resolve(ManualCloseableResource)
 
     assert instance.closed, 'default autoclose=True must close tracked instances.'
 
@@ -319,12 +312,9 @@ def autoclose_default_true_destroys_tracked() -> None:
 @fact
 def autoclose_explicit_true_destroys_tracked() -> None:
     """Explicit autoclose=True must close tracked instances."""
-    container = Container(autoclose=True)
-    container.register_transient(ManualCloseableResource)
-    instance = container.resolve(ManualCloseableResource)
-
-    with container:
-        pass
+    with Container(autoclose=True) as container:
+        container.register_transient(ManualCloseableResource)
+        instance = container.resolve(ManualCloseableResource)
 
     assert instance.closed, 'autoclose=True must close tracked instances.'
 
@@ -333,13 +323,9 @@ def autoclose_explicit_true_destroys_tracked() -> None:
 def autoclose_false_inherited_by_scope_by_default() -> None:
     """autoclose=False on a parent is inherited by child scopes by default."""
     parent = Container(autoclose=False)
-
-    child = parent.create_scope()
-    child.register_transient(ManualCloseableResource)
-    child_instance = child.resolve(ManualCloseableResource)
-
-    with child:
-        pass
+    with parent.create_scope() as child:
+        child.register_transient(ManualCloseableResource)
+        child_instance = child.resolve(ManualCloseableResource)
 
     assert not child_instance.closed, 'autoclose=False inherited by scope must prevent close().'
 
@@ -348,13 +334,9 @@ def autoclose_false_inherited_by_scope_by_default() -> None:
 def autoclose_false_override_on_scope() -> None:
     """Child scope can override parent's autoclose=False with autoclose=True."""
     parent = Container(autoclose=False)
-
-    child = parent.create_scope(autoclose=True)
-    child.register_transient(ManualCloseableResource)
-    child_instance = child.resolve(ManualCloseableResource)
-
-    with child:
-        pass
+    with parent.create_scope(autoclose=True) as child:
+        child.register_transient(ManualCloseableResource)
+        child_instance = child.resolve(ManualCloseableResource)
 
     assert child_instance.closed, 'explicit autoclose=True on scope must close tracked instances.'
 
@@ -368,3 +350,95 @@ async def autoclose_false_with_async_closeable() -> None:
         assert not instance.closed, 'should not be closed inside context'
 
     assert not instance.closed, 'autoclose=False must not call async close() either.'
+
+
+@fact
+def reentrant_enter_raises_runtime_error() -> None:
+    """Calling __enter__ twice without __exit__ must raise RuntimeError."""
+    ctx = Container()
+    ctx.__enter__()
+    try:
+        ctx.__enter__()
+        assert False, 'Should have raised RuntimeError'
+    except RuntimeError as e:
+        assert 'already being used' in str(e).lower()
+    ctx.__exit__(None, None, None)
+
+
+@fact
+async def reentrant_async_enter_raises_runtime_error() -> None:
+    """Calling __aenter__ twice without __aexit__ must raise RuntimeError."""
+    ctx = Container()
+    await ctx.__aenter__()
+    try:
+        await ctx.__aenter__()
+        assert False, 'Should have raised RuntimeError'
+    except RuntimeError as e:
+        assert 'already being used' in str(e).lower()
+    await ctx.__aexit__(None, None, None)
+
+
+@fact
+def exit_without_enter_raises_runtime_error() -> None:
+    """Calling __exit__ without a prior __enter__ must raise RuntimeError."""
+    ctx = Container()
+    try:
+        ctx.__exit__(None, None, None)
+        assert False, 'Should have raised RuntimeError'
+    except RuntimeError as e:
+        assert 'without prior __enter__' in str(e)
+
+
+@fact
+async def async_exit_without_async_enter_raises_runtime_error() -> None:
+    """Calling __aexit__ without a prior __aenter__ must raise RuntimeError."""
+    ctx = Container()
+    try:
+        await ctx.__aexit__(None, None, None)
+        assert False, 'Should have raised RuntimeError'
+    except RuntimeError as e:
+        assert 'without prior __aenter__' in str(e)
+
+
+@fact
+def separate_context_managers_on_same_container_sequentially_work() -> None:
+    """Two sequential context managers on the same Container work correctly."""
+    with Container() as c1:
+        c1.register_transient(CloseableResource)
+        r1 = c1.resolve(CloseableResource)
+    assert r1.closed, 'First scope should close its instance'
+
+    with Container() as c2:
+        c2.register_transient(CloseableResource)
+        r2 = c2.resolve(CloseableResource)
+    assert r2.closed, 'Second scope should close its instance'
+
+
+@fact
+async def async_context_isolation_per_async_context() -> None:
+    """Different async contexts should have independent context manager scopes."""
+    results: list[tuple[int, str, bool]] = []
+
+    async def async_task(task_id: int) -> None:
+        async with Container() as container:
+            container.register_transient(CloseableResource)
+            instance = container.resolve(CloseableResource)
+            # Instance should not be closed while inside context
+            results.append((task_id, 'inside', not instance.closed))
+
+        # Instance should be closed after exit
+        results.append((task_id, 'outside', instance.closed))
+
+    await asyncio.gather(
+        async_task(1),
+        async_task(2),
+    )
+
+    # All instances should be closed after both tasks complete
+    assert results == [
+        (1, 'inside', True),
+        (1, 'outside', True),
+        (2, 'inside', True),
+        (2, 'outside', True),
+    ], f'Unexpected results: {results}'
+

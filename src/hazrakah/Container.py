@@ -28,6 +28,7 @@ from typing import (
     get_args,
     get_origin
 )
+from uuid import uuid4
 
 from .RegistrationError import RegistrationError
 from .ResolutionError import ResolutionError
@@ -117,19 +118,31 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
     Example (Context Manager)
     -------------------------
 
-    The container can be used as a context manager for both direct scoping and nested scopes:
+    The container can be used as a context manager to create a scoped child
+    container for deterministic cleanup:
 
 
     .. code:: python
 
-        with Container() as container:
-            container.register_transient(Foo)
-            with Container() as scoped:
-                scoped.register_transient(Bar)
-                foo = scoped.resolve(Foo)
-                assert foo is not None
-            bar = container.resolve(Bar)  # raises Error (not in scope)
-            assert foo.is_closed is True  # context manager scope closes
+        container = Container()
+        with container as scoped:
+            scoped.register_transient(Foo)
+            foo = scoped.resolve(Foo)
+        assert foo.is_closed is True  # scoped container closes on exit
+
+    The returned scope is a child of the parent container, so it inherits
+    registrations from the parent but its tracked instances are isolated:
+
+
+    .. code:: python
+
+        parent = Container()
+        parent.register_transient(Foo)
+        with parent as child:
+            child.register_transient(Bar)
+            foo = child.resolve(Foo)   # inherited from parent
+            bar = child.resolve(Bar)   # child-only registration
+
 
     Example (Async Context Manager)
     -------------------------------
@@ -166,6 +179,7 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
     __tracked: set[Any]
     __namespaces: dict[str, Container]
     __namespace: Optional[str]
+    __context: ContextVar[Optional[Container]]
 
     def __init__(
         self,
@@ -184,6 +198,7 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         self.__tracked: set[Any] = set()
         self.__namespaces = {}
         self.__autoclose = autoclose is not False
+        self.__context = ContextVar(f'__ctx_{uuid4().hex}', default=None)
         super().__setattr__('__namespace', namespace)
 
         class _proto(Protocol):
@@ -1087,8 +1102,17 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
             ns_container.freeze()
 
     def __enter__(self) -> Container:
-        """Return *self* to enable context manager usage."""
-        return self
+        """
+        Create a child scope and return it.
+
+        Raises ``RuntimeError`` if this Container is already in use as a context manager.
+        """
+        current = self.__context.get()
+        if current is not None:
+            raise RuntimeError("Container is already being used as a context manager")
+        scope = self.create_scope()
+        self.__context.set(scope)
+        return scope
 
     def __exit__(
         self,
@@ -1097,27 +1121,35 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         exc_tb: Optional[TracebackType],  # type: ignore[name-defined]
     ) -> None:
         """
-        Destroy all tracked instances.
+        Destroy all tracked instances in the context manager scope.
 
-        Every object that was directly instantiated by this container (via ``__create_instance``) is
-        torn down by calling its ``close()`` method, if present. The tracked set is then cleared so
-        no object is double-cleaned.
+        Every object that was directly instantiated by the scoped container is
+        torn down by calling its ``close()`` method, if present. The tracked set
+        is then cleared so no object is double-cleaned.
 
-        If ``close()`` returns a coroutine, it is awaited synchronously using ``self.__await_or_block``.
+        If ``close()`` returns a coroutine, it is awaited synchronously using
+        ``self.__await_or_block``.
 
         :param exc_type: (OPTIONAL) Exception type, if one was raised inside the ``with`` block.
         :param exc_val: (OPTIONAL) The exception instance, if one was raised.
         :param exc_tb: (OPTIONAL) Traceback object, if one was raised.
+        :raises RuntimeError: If ``__exit__`` is called without a prior ``__enter__``.
         """
-        for obj in getattr(self, '_Container__tracked', set()):  # type: ignore[attr-defined]
-            close = getattr(obj, 'close', None)
-            if self.__autoclose and close is not None:
-                result = close()
-                if asyncio.iscoroutine(result):
-                    self.__await_or_block(result)
-        tracked = getattr(self, '_Container__tracked', None)  # type: ignore[attr-defined]
-        if tracked is not None:
-            tracked.clear()
+        scope = self.__context.get()
+        if scope is None:
+            raise RuntimeError("__exit__ called without prior __enter__")
+        try:
+            for obj in getattr(scope, '_Container__tracked', set()):  # type: ignore[attr-defined]
+                close = getattr(obj, 'close', None)
+                if scope.__autoclose and close is not None:
+                    result = close()
+                    if asyncio.iscoroutine(result):
+                        scope.__await_or_block(result)
+            tracked = getattr(scope, '_Container__tracked', None)  # type: ignore[attr-defined]
+            if tracked is not None:
+                tracked.clear()
+        finally:
+            self.__context.set(None)
 
     def __del__(self) -> None:
         """Best-effort cleanup on GC."""
@@ -1135,8 +1167,17 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
             tracked.clear()
 
     async def __aenter__(self) -> Container:
-        """Return *self* to enable async context manager usage."""
-        return self
+        """
+        Create a child scope and return it.
+
+        Raises ``RuntimeError`` if this Container is already in use as an async context manager.
+        """
+        current = self.__context.get()
+        if current is not None:
+            raise RuntimeError("Container is already being used as an async context manager")
+        scope = self.create_scope()
+        self.__context.set(scope)
+        return scope
 
     async def __aexit__(
         self,
@@ -1145,20 +1186,31 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         exc_tb: Optional[TracebackType],  # type: ignore[name-defined]
     ) -> None:
         """
-        Async teardown of tracked instances.
+        Async teardown of tracked instances in the context manager scope.
 
         Equivalent to ``__exit__`` but awaits coroutine ``close()`` methods
         without blocking a running event loop.
+
+        :param exc_type: (OPTIONAL) Exception type, if one was raised inside the ``async with`` block.
+        :param exc_val: (OPTIONAL) The exception instance, if one was raised.
+        :param exc_tb: (OPTIONAL) Traceback object, if one was raised.
+        :raises RuntimeError: If ``__aexit__`` is called without a prior ``__aenter__``.
         """
-        for obj in getattr(self, '_Container__tracked', set()):  # type: ignore[attr-defined]
-            close = getattr(obj, 'close', None)
-            if self.__autoclose and close is not None:
-                result = close()
-                if asyncio.iscoroutine(result):
-                    await result
-        tracked = getattr(self, '_Container__tracked', None)  # type: ignore[attr-defined]
-        if tracked is not None:
-            tracked.clear()
+        scope = self.__context.get()
+        if scope is None:
+            raise RuntimeError("__aexit__ called without prior __aenter__")
+        try:
+            for obj in getattr(scope, '_Container__tracked', set()):  # type: ignore[attr-defined]
+                close = getattr(obj, 'close', None)
+                if scope.__autoclose and close is not None:
+                    result = close()
+                    if asyncio.iscoroutine(result):
+                        await result
+            tracked = getattr(scope, '_Container__tracked', None)  # type: ignore[attr-defined]
+            if tracked is not None:
+                tracked.clear()
+        finally:
+            self.__context.set(None)
 
 
 __all__ = [
