@@ -195,7 +195,7 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         self.__singletons = {}
         self.__outer_scope = outer_scope
         self.__registrations = {}
-        self.__tracked: set[Any] = set()
+        self.__tracked = set[Any]()
         self.__namespaces = {}
         self.__autoclose = autoclose is not False
         self.__context = ContextVar(f'__ctx_{uuid4().hex}', default=None)
@@ -400,9 +400,7 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
             factory = registration.target
             instance = self.__await_or_block(factory(self))
         owner: Container = scope if scope is not None else self
-        tracked = getattr(owner, '_Container__tracked', None)  # type: ignore[attr-defined]
-        if tracked is not None:
-            tracked.add(instance)
+        owner.__tracked.add(instance)
         return instance
 
     def __is_concrete(self, t: Type[Any]) -> bool:
@@ -1139,21 +1137,19 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         if scope is None:
             raise RuntimeError("__exit__ called without prior __enter__")
         try:
-            for obj in getattr(scope, '_Container__tracked', set()):  # type: ignore[attr-defined]
+            for obj in scope.__tracked:
                 close = getattr(obj, 'close', None)
                 if scope.__autoclose and close is not None:
                     result = close()
                     if asyncio.iscoroutine(result):
                         scope.__await_or_block(result)
-            tracked = getattr(scope, '_Container__tracked', None)  # type: ignore[attr-defined]
-            if tracked is not None:
-                tracked.clear()
+            scope.__tracked.clear()
         finally:
             self.__context.set(None)
 
     def __del__(self) -> None:
         """Best-effort cleanup on GC."""
-        for obj in getattr(self, '_Container__tracked', []):  # type: ignore[attr-defined]
+        for obj in self.__tracked:
             try:
                 close = getattr(obj, 'close', None)
                 if self.__autoclose and close is not None:
@@ -1162,9 +1158,7 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
                         self.__await_or_block(result)
             except Exception:
                 pass
-        tracked = getattr(self, '_Container__tracked', None)  # type: ignore[attr-defined]
-        if tracked is not None:
-            tracked.clear()
+        self.__tracked.clear()
 
     async def __aenter__(self) -> Container:
         """
@@ -1200,15 +1194,13 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         if scope is None:
             raise RuntimeError("__aexit__ called without prior __aenter__")
         try:
-            for obj in getattr(scope, '_Container__tracked', set()):  # type: ignore[attr-defined]
+            for obj in scope.__tracked:
                 close = getattr(obj, 'close', None)
                 if scope.__autoclose and close is not None:
                     result = close()
                     if asyncio.iscoroutine(result):
                         await result
-            tracked = getattr(scope, '_Container__tracked', None)  # type: ignore[attr-defined]
-            if tracked is not None:
-                tracked.clear()
+            scope.__tracked.clear()
         finally:
             self.__context.set(None)
 
