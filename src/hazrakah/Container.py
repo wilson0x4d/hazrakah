@@ -160,6 +160,31 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
 
         # res.close() is awaited asynchronously on exit.
 
+    Example (Destruction)
+    ---------------------
+
+    Tracked instances can be destroyed deterministically, without relying on the garbage
+    collector, by calling ``dispose`` (sync) or ``adispose`` (async) on the container that
+    tracks them, e.g. a child scope created to serve a single unit of work.  Failures in
+    individual ``close()`` calls are observable: a single failure is re-raised as the
+    original exception, and multiple failures are raised as an :class:`ExceptionGroup`.
+
+
+    .. code:: python
+
+        container = Container()
+        container.register_transient(Foo)
+        foo = container.resolve(Foo)
+        container.dispose()  # foo.close() is called; failures propagate
+
+    .. code:: python
+
+        async def main() -> None:
+            container = Container()
+            container.register_transient(AioResource)
+            res = container.resolve(AioResource)
+            await container.adispose()  # res.close() is awaited
+
     :ivar outer_scope: The parent container, or ``None`` for the root.
     :vartype outer_scope: Optional[Container]
 
@@ -168,6 +193,8 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
     .. automethod:: __exit__
     .. automethod:: __aenter__
     .. automethod:: __aexit__
+    .. automethod:: dispose
+    .. automethod:: adispose
     """
 
     __self_resolve: bool
@@ -1099,6 +1126,87 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         for ns_container in getattr(self, '_Container__namespaces', {}).values():  # type: ignore[attr-defined]
             ns_container.freeze()
 
+    @staticmethod
+    def __raise_dispose_errors(errors: list[Exception]) -> None:
+        """
+        Re-raise failures collected while destroying tracked instances.
+
+        A single failure is re-raised as the original exception.  Multiple failures are
+        raised together as an :class:`ExceptionGroup`.
+
+        :param errors: Exceptions collected while closing tracked instances.
+        """
+        if not errors:
+            return
+        if len(errors) == 1:
+            raise errors[0]
+        raise ExceptionGroup(f'{len(errors)} tracked instance close() calls failed', errors)
+
+    def dispose(self) -> None:
+        """
+        Deterministically destroy all instances tracked by this container.
+
+        Every tracked instance is attempted in turn: when ``autoclose`` is enabled and the
+        instance exposes a ``close()`` method, it is called, and coroutine results are
+        blocked on and awaited synchronously.  A failure in one ``close()`` call does not
+        stop the remaining tracked instances from being closed, making destruction
+        deterministic.  Instances that close successfully are untracked immediately, while
+        instances whose ``close()`` call fails remain tracked, so a subsequent ``dispose``
+        call only re-attempts the instances that previously failed.  Calling ``dispose`` on
+        a container with nothing left to destroy is a no-op.
+
+        This method is observable: when exactly one ``close()`` call fails, the original
+        exception is re-raised after all tracked instances have been attempted.  When
+        several ``close()`` calls fail, they are raised together as an
+        :class:`ExceptionGroup`.
+
+        :raises ExceptionGroup: When multiple tracked instances fail to close.
+        """
+        errors: list[Exception] = []
+        for obj in list(self.__tracked):
+            close = getattr(obj, 'close', None)
+            if self.__autoclose and close is not None:
+                try:
+                    result = close()
+                    if asyncio.iscoroutine(result):
+                        self.__await_or_block(result)
+                except Exception as e:
+                    errors.append(e)
+                else:
+                    self.__tracked.discard(obj)
+            else:
+                self.__tracked.discard(obj)
+        self.__raise_dispose_errors(errors)
+
+    async def adispose(self) -> None:
+        """
+        Deterministically destroy all instances tracked by this container, asynchronously.
+
+        Equivalent to :meth:`dispose`, but coroutine ``close()`` results are awaited natively
+        instead of being blocked on, so a running event loop is never blocked.  The same
+        semantics apply: every tracked instance is attempted, instances that close
+        successfully are untracked, instances that fail remain tracked for a subsequent
+        call, a single failure is re-raised as the original exception, and multiple
+        failures are raised together as an :class:`ExceptionGroup`.
+
+        :raises ExceptionGroup: When multiple tracked instances fail to close.
+        """
+        errors: list[Exception] = []
+        for obj in list(self.__tracked):
+            close = getattr(obj, 'close', None)
+            if self.__autoclose and close is not None:
+                try:
+                    result = close()
+                    if asyncio.iscoroutine(result):
+                        await result
+                except Exception as e:
+                    errors.append(e)
+                else:
+                    self.__tracked.discard(obj)
+            else:
+                self.__tracked.discard(obj)
+        self.__raise_dispose_errors(errors)
+
     def __enter__(self) -> Container:
         """
         Create a child scope and return it.
@@ -1121,13 +1229,6 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         """
         Destroy all tracked instances in the context manager scope.
 
-        Every object that was directly instantiated by the scoped container is
-        torn down by calling its ``close()`` method, if present. The tracked set
-        is then cleared so no object is double-cleaned.
-
-        If ``close()`` returns a coroutine, it is awaited synchronously using
-        ``self.__await_or_block``.
-
         :param exc_type: (OPTIONAL) Exception type, if one was raised inside the ``with`` block.
         :param exc_val: (OPTIONAL) The exception instance, if one was raised.
         :param exc_tb: (OPTIONAL) Traceback object, if one was raised.
@@ -1135,30 +1236,18 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         """
         scope = self.__context.get()
         if scope is None:
-            raise RuntimeError("__exit__ called without prior __enter__")
+            raise RuntimeError('__exit__ called without prior __enter__')
         try:
-            for obj in scope.__tracked:
-                close = getattr(obj, 'close', None)
-                if scope.__autoclose and close is not None:
-                    result = close()
-                    if asyncio.iscoroutine(result):
-                        scope.__await_or_block(result)
-            scope.__tracked.clear()
+            scope.dispose()
         finally:
             self.__context.set(None)
 
     def __del__(self) -> None:
-        """Best-effort cleanup on GC."""
-        for obj in self.__tracked:
-            try:
-                close = getattr(obj, 'close', None)
-                if self.__autoclose and close is not None:
-                    result = close()
-                    if asyncio.iscoroutine(result):
-                        self.__await_or_block(result)
-            except Exception:
-                pass
-        self.__tracked.clear()
+        """Best-effort cleanup on GC.  Delegates to :meth:`dispose`, swallowing any failure."""
+        try:
+            self.dispose()
+        except Exception:
+            pass
 
     async def __aenter__(self) -> Container:
         """
@@ -1182,9 +1271,6 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         """
         Async teardown of tracked instances in the context manager scope.
 
-        Equivalent to ``__exit__`` but awaits coroutine ``close()`` methods
-        without blocking a running event loop.
-
         :param exc_type: (OPTIONAL) Exception type, if one was raised inside the ``async with`` block.
         :param exc_val: (OPTIONAL) The exception instance, if one was raised.
         :param exc_tb: (OPTIONAL) Traceback object, if one was raised.
@@ -1192,15 +1278,9 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         """
         scope = self.__context.get()
         if scope is None:
-            raise RuntimeError("__aexit__ called without prior __aenter__")
+            raise RuntimeError('__aexit__ called without prior __aenter__')
         try:
-            for obj in scope.__tracked:
-                close = getattr(obj, 'close', None)
-                if scope.__autoclose and close is not None:
-                    result = close()
-                    if asyncio.iscoroutine(result):
-                        await result
-            scope.__tracked.clear()
+            await scope.adispose()
         finally:
             self.__context.set(None)
 

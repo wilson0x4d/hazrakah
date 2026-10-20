@@ -442,3 +442,361 @@ async def async_context_isolation_per_async_context() -> None:
         (2, 'outside', True),
     ], f'Unexpected results: {results}'
 
+
+class CountingCloseableResource:
+    """A resource that counts how many times ``close`` is called."""
+
+    def __init__(self) -> None:
+        self.close_count = 0
+
+    def close(self) -> None:
+        self.close_count += 1
+
+
+class FlakyCloseableResource:
+    """A resource whose ``close`` fails until *retries* attempts have been made."""
+
+    __retries: int
+    closed: bool
+
+    def __init__(self, retries: int) -> None:
+        self.__retries = retries
+        self.closed = False
+
+    def close(self) -> None:
+        if self.__retries > 0:
+            self.__retries -= 1
+            raise RuntimeError('flaky close failed')
+        self.closed = True
+
+
+class FailCloseResource:
+    """A resource whose ``close`` always raises the configured message."""
+
+    __message: str
+
+    def __init__(self, message: str) -> None:
+        self.__message = message
+
+    def close(self) -> None:
+        raise RuntimeError(self.__message)
+
+
+class AsyncBadResource:
+    """A resource whose async ``close`` always raises the configured message."""
+
+    __message: str
+
+    def __init__(self, message: str) -> None:
+        self.__message = message
+
+    async def close(self) -> None:
+        raise RuntimeError(self.__message)
+
+
+class AsyncCountingCloseableResource:
+    """A resource with an async ``close`` that counts invocations."""
+
+    def __init__(self) -> None:
+        self.close_count = 0
+
+    async def close(self) -> None:
+        self.close_count += 1
+
+
+@fact
+def dispose_destroys_tracked_instances() -> None:
+    """dispose() must call close() on every tracked instance."""
+    container = Container()
+    container.register_transient(CloseableResource)
+    instance = container.resolve(CloseableResource)
+
+    container.dispose()
+
+    assert instance.closed, 'dispose() should have closed the tracked instance.'
+
+
+@fact
+def dispose_is_idempotent_for_closed_instances() -> None:
+    """A second dispose() must not re-close instances that already closed successfully."""
+    resource = CountingCloseableResource()
+    container = Container()
+    container.register_transient(CountingCloseableResource, lambda _: resource)  # type: ignore[arg-type]
+    _ = container.resolve(CountingCloseableResource)
+
+    container.dispose()
+    container.dispose()
+
+    assert resource.close_count == 1, f'close() must be called exactly once (expected=1, actual={resource.close_count})'
+
+
+@fact
+def dispose_propagates_single_close_failure() -> None:
+    """A single close() failure must be re-raised as the original exception."""
+    bad_resource = FailCloseResource('close is broken')
+    container = Container()
+    container.register_transient(FailCloseResource, lambda _: bad_resource)  # type: ignore[arg-type]
+    _ = container.resolve(FailCloseResource)
+
+    try:
+        container.dispose()
+        assert False, 'dispose() should have raised RuntimeError'
+    except RuntimeError as e:
+        assert str(e) == 'close is broken', f'(expected=close is broken, actual={str(e)})'
+
+
+@fact
+def dispose_attempts_all_tracked_before_raising() -> None:
+    """Every tracked instance must be closed even when one close() fails; the failed instance stays tracked."""
+    bad_resource = FailCloseResource('close is broken')
+    good_resource = CloseableResource()
+    container = Container()
+    container.register_transient(FailCloseResource, lambda _: bad_resource)  # type: ignore[arg-type]
+    container.register_transient(CloseableResource, lambda _: good_resource)  # type: ignore[arg-type]
+    _ = container.resolve(FailCloseResource)
+    _ = container.resolve(CloseableResource)
+
+    try:
+        container.dispose()
+        assert False, 'dispose() should have raised RuntimeError'
+    except RuntimeError:
+        pass
+
+    assert good_resource.closed, 'Instances after a failing close() must still be closed.'
+    assert bad_resource in getattr(container, '_Container__tracked'), 'Failed instance must remain tracked for retry.'
+    assert good_resource not in getattr(container, '_Container__tracked'), 'Closed instance must be untracked.'
+
+
+@fact
+def dispose_retries_only_failed_instances() -> None:
+    """A subsequent dispose() after a failure must re-attempt only the instances that failed."""
+    flaky = FlakyCloseableResource(retries=1)
+    container = Container()
+    container.register_transient(FlakyCloseableResource, lambda _: flaky)  # type: ignore[arg-type]
+    _ = container.resolve(FlakyCloseableResource)
+
+    try:
+        container.dispose()
+        assert False, 'first dispose() should have raised RuntimeError'
+    except RuntimeError:
+        pass
+
+    container.dispose()
+
+    assert flaky.closed, 'Second dispose() must re-attempt and close the previously failed instance.'
+    tracked = getattr(container, '_Container__tracked')
+    assert len(tracked) == 0, f'Tracked set must be empty after successful retry (actual={len(tracked)})'
+
+
+@fact
+def dispose_raises_exception_group_on_multiple_failures() -> None:
+    """Multiple close() failures must be raised as an ExceptionGroup containing each failure."""
+
+    class BadA:
+        def close(self) -> None:
+            raise RuntimeError('close a is broken')
+
+    class BadB:
+        def close(self) -> None:
+            raise RuntimeError('close b is broken')
+
+    container = Container()
+    container.register_transient(BadA)
+    container.register_transient(BadB)
+    _ = container.resolve(BadA)
+    _ = container.resolve(BadB)
+
+    try:
+        container.dispose()
+        assert False, 'dispose() should have raised ExceptionGroup'
+    except ExceptionGroup as e:
+        messages = sorted(str(x) for x in e.exceptions)
+        assert messages == ['close a is broken', 'close b is broken'], f'Unexpected failures: {messages}'
+
+
+@fact
+def dispose_respects_autoclose_false() -> None:
+    """dispose() must not call close() when autoclose=False, and must still clear tracking."""
+    container = Container(autoclose=False)
+    container.register_transient(ManualCloseableResource)
+    instance = container.resolve(ManualCloseableResource)
+
+    container.dispose()
+
+    assert not instance.closed, 'autoclose=False must prevent close() during dispose().'
+    tracked = getattr(container, '_Container__tracked')
+    assert len(tracked) == 0, f'Tracking must be cleared even when autoclose=False (actual={len(tracked)})'
+
+
+@fact
+def dispose_clears_tracked_instances_without_close() -> None:
+    """Tracked instances without a close() method must be untracked by dispose()."""
+
+    class NoClose:
+        pass
+
+    container = Container()
+    container.register_transient(NoClose)
+    _ = container.resolve(NoClose)
+
+    container.dispose()
+
+    tracked = getattr(container, '_Container__tracked')
+    assert len(tracked) == 0, f'Instances without close() must be untracked (actual={len(tracked)})'
+
+
+@fact
+def dispose_only_affects_own_scope() -> None:
+    """dispose() on a child scope must not destroy instances tracked by its parent."""
+    parent = Container()
+    parent.register_singleton(CloseableResource)
+    parent_instance = parent.resolve(CloseableResource)
+
+    child = parent.create_scope()
+    child.register_transient(ManualCloseableResource)
+    child_instance = child.resolve(ManualCloseableResource)
+
+    child.dispose()
+
+    assert child_instance.closed, 'Child-scoped instance must be destroyed by child dispose().'
+    assert not parent_instance.closed, 'Parent singleton must survive child dispose().'
+
+
+@fact
+def dispose_awaits_async_close() -> None:
+    """A synchronous dispose() must block on and await coroutine close() results."""
+    container = Container()
+    container.register_transient(AsyncCloseableResource)
+    instance = container.resolve(AsyncCloseableResource)
+
+    container.dispose()
+
+    assert instance.closed, 'dispose() must await async close() synchronously.'
+
+
+@fact
+def del_still_best_effort_with_failing_close() -> None:
+    """__del__ must swallow close() failures and still close the remaining tracked instances."""
+    good_resource = ManualCloseableResource()
+
+    class Bad:
+        def close(self) -> None:
+            raise RuntimeError('close is broken')
+
+    container = Container()
+    container.register_transient(ManualCloseableResource, lambda _: good_resource)  # type: ignore[arg-type]
+    container.register_transient(Bad)
+    _ = container.resolve(ManualCloseableResource)
+    _ = container.resolve(Bad)
+
+    del container
+    gc.collect()
+
+    assert good_resource.closed, '__del__ must still close remaining instances when one close() fails.'
+
+
+@fact
+async def adispose_awaits_async_close() -> None:
+    """adispose() must natively await coroutine close() results."""
+    container = Container()
+    container.register_transient(AsyncCloseableResource)
+    instance = container.resolve(AsyncCloseableResource)
+
+    await container.adispose()
+
+    assert instance.closed, 'adispose() must await async close().'
+
+
+@fact
+async def adispose_is_idempotent_for_closed_instances() -> None:
+    """A second adispose() must not re-close instances that already closed successfully."""
+    resource = AsyncCountingCloseableResource()
+    container = Container()
+    container.register_transient(AsyncCountingCloseableResource, lambda _: resource)  # type: ignore[arg-type]
+    _ = container.resolve(AsyncCountingCloseableResource)
+
+    await container.adispose()
+    await container.adispose()
+
+    assert resource.close_count == 1, f'close() must be called exactly once (expected=1, actual={resource.close_count})'
+
+
+@fact
+async def adispose_propagates_single_close_failure() -> None:
+    """A single close() failure must be re-raised as the original exception from adispose()."""
+    bad_resource = AsyncBadResource('close is broken')
+    container = Container()
+    container.register_transient(AsyncBadResource, lambda _: bad_resource)  # type: ignore[arg-type]
+    _ = container.resolve(AsyncBadResource)
+
+    try:
+        await container.adispose()
+        assert False, 'adispose() should have raised RuntimeError'
+    except RuntimeError as e:
+        assert str(e) == 'close is broken', f'(expected=close is broken, actual={str(e)})'
+
+
+@fact
+async def adispose_attempts_all_tracked_before_raising() -> None:
+    """Every tracked instance must be closed even when one async close() fails; the failed instance stays tracked."""
+
+    class AsyncBad:
+        async def close(self) -> None:
+            raise RuntimeError('async close is broken')
+
+    good_resource = AsyncCloseableResource()
+    container = Container()
+    container.register_transient(AsyncBad)
+    container.register_transient(AsyncCloseableResource, lambda _: good_resource)  # type: ignore[arg-type]
+    _ = container.resolve(AsyncBad)
+    _ = container.resolve(AsyncCloseableResource)
+
+    try:
+        await container.adispose()
+        assert False, 'adispose() should have raised RuntimeError'
+    except RuntimeError:
+        pass
+
+    assert good_resource.closed, 'Instances after a failing async close() must still be closed.'
+    assert good_resource not in getattr(container, '_Container__tracked'), 'Closed instance must be untracked.'
+    tracked = getattr(container, '_Container__tracked')
+    assert len(tracked) == 1, f'Failed instance must remain tracked (actual={len(tracked)})'
+
+
+@fact
+async def adispose_raises_exception_group_on_multiple_failures() -> None:
+    """Multiple close() failures must be raised as an ExceptionGroup containing each failure."""
+
+    class AsyncBadA:
+        async def close(self) -> None:
+            raise RuntimeError('async close a is broken')
+
+    class AsyncBadB:
+        async def close(self) -> None:
+            raise RuntimeError('async close b is broken')
+
+    container = Container()
+    container.register_transient(AsyncBadA)
+    container.register_transient(AsyncBadB)
+    _ = container.resolve(AsyncBadA)
+    _ = container.resolve(AsyncBadB)
+
+    try:
+        await container.adispose()
+        assert False, 'adispose() should have raised ExceptionGroup'
+    except ExceptionGroup as e:
+        messages = sorted(str(x) for x in e.exceptions)
+        assert messages == ['async close a is broken', 'async close b is broken'], f'Unexpected failures: {messages}'
+
+
+@fact
+async def adispose_respects_autoclose_false() -> None:
+    """adispose() must not call close() when autoclose=False."""
+    container = Container(autoclose=False)
+    container.register_transient(AsyncCloseableResource)
+    instance = container.resolve(AsyncCloseableResource)
+
+    await container.adispose()
+
+    assert not instance.closed, 'autoclose=False must prevent async close() during adispose().'
+
