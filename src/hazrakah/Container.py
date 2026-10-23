@@ -200,6 +200,8 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
     __self_resolve: bool
     __frozen: bool
     __singletons: dict[Type[Any], Any]
+    __singleton_locks: dict[Any, threading.RLock]
+    __singleton_lock_guard: threading.Lock
     __outer_scope: Optional[Container]
     __registrations: dict[Type[Any], Registration]
     __proto_co_code: Any
@@ -220,6 +222,8 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         self.__logger = logging.getLogger(__name__)
         self.__self_resolve = self_resolve is not False
         self.__singletons = {}
+        self.__singleton_locks = {}
+        self.__singleton_lock_guard = threading.Lock()
         self.__outer_scope = outer_scope
         self.__registrations = {}
         self.__tracked = set[Any]()
@@ -581,6 +585,19 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
             return self.resolve(t)
         raise ResolutionError(f'No registration found for {t!r}')
 
+    def __get_singleton_lock(self, cache_key: Any) -> threading.RLock:
+        """Return the creation lock for *cache_key*, creating it if needed.
+
+        The guard lock protects only the locks dictionary itself and is
+        never held across instance creation.
+        """
+        with self.__singleton_lock_guard:
+            lock = self.__singleton_locks.get(cache_key)
+            if lock is None:
+                lock = threading.RLock()
+                self.__singleton_locks[cache_key] = lock
+            return lock
+
     def _dispatch_registration(self, t: Type[Any], registration: Registration, scope: Container) -> Any:
         """Dispatch registration by lifetime."""
         match registration.lifetime:
@@ -594,9 +611,18 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
                 if tgt is not None and isinstance(tgt, type) and tgt is not t:
                     cache_key = tgt
                 obj = scope.__singletons.get(cache_key)
-                if obj is None:
-                    obj = scope.__create_instance(t, registration, scope=scope)  # type: ignore[arg-type]
-                    scope.__singletons[cache_key] = obj
+                if obj is not None:
+                    return obj
+                # Double-checked locking: the per-key lock serializes first-time
+                # creation across threads so a SINGLETON registration can never
+                # produce more than one instance.  The lock is per cache_key so
+                # unrelated singletons (and async factories running on worker
+                # threads) never contend on a shared container-wide lock.
+                with scope.__get_singleton_lock(cache_key):
+                    obj = scope.__singletons.get(cache_key)
+                    if obj is None:
+                        obj = scope.__create_instance(t, registration, scope=scope)  # type: ignore[arg-type]
+                        scope.__singletons[cache_key] = obj
                 return obj
             case Lifetime.TRANSIENT:
                 return self.__create_instance(t, registration, scope=scope)  # type: ignore[arg-type]

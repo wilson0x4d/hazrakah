@@ -27,6 +27,7 @@ Usage::
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import threading
 from typing import TYPE_CHECKING, Callable, Generic, Optional, TypeVar
 
 if TYPE_CHECKING:
@@ -52,6 +53,7 @@ class Cached(Generic[T]):
     __value_expiration_timestamp: float | None
     __factory: Callable[[Resolver], T]
     __ttl_seconds: float
+    __lock: threading.RLock
 
     def __init__(
         self,
@@ -64,6 +66,7 @@ class Cached(Generic[T]):
         self.__value_expiration_timestamp = None
         self.__factory = factory
         self.__ttl_seconds = ttl
+        self.__lock = threading.RLock()
 
     def __call__(self, resolver: Resolver) -> T:
         """Return the cached value, refreshing from *factory* if expired or on first call.
@@ -79,12 +82,16 @@ class Cached(Generic[T]):
         """
         if self.__value is not None and not self.__has_expired():
             return self.__value
-        # Expired or first call — re-evaluate
-        self.__value = self.__factory(resolver)
-        self.__value_expiration_timestamp = (
-            datetime.now(timezone.utc).timestamp() + self.__ttl_seconds
-        )
-        return self.__value
+        # Expired or first call — re-evaluate.  Locking ensures
+        # concurrent callers invoke the factory exactly once per TTL.
+        with self.__lock:
+            if self.__value is not None and not self.__has_expired():
+                return self.__value
+            self.__value = self.__factory(resolver)
+            self.__value_expiration_timestamp = (
+                datetime.now(timezone.utc).timestamp() + self.__ttl_seconds
+            )
+            return self.__value
 
     @property
     def ttl(self) -> timedelta:

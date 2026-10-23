@@ -11,6 +11,7 @@ project.
 from __future__ import annotations
 
 import asyncio
+import threading
 from datetime import timedelta
 from hazrakah import Cached, DependencyResolver
 from punit import fact
@@ -304,3 +305,81 @@ async def timedelta_ttl_zero_expires_immediately() -> None:
     b = cached(_resolver_mock)  # type: ignore[arg-type]
     assert a is not b
     assert call_count == 2
+
+
+@fact
+def concurrent_first_invocation_calls_factory_once() -> None:
+    """Concurrent first calls invoke the factory exactly once and share one value."""
+    call_count = 0
+
+    def factory(c):  # noqa: ANN201, ARG001
+        nonlocal call_count
+        call_count += 1
+        time.sleep(0.05)  # widen the race window
+        return object()
+
+    cached = Cached(factory)  # type: ignore[arg-type]
+    n_threads = 16
+    barrier = threading.Barrier(n_threads)
+    results: list[object | None] = [None] * n_threads
+    errors: list[BaseException] = []
+
+    def worker(idx: int) -> None:
+        try:
+            barrier.wait()
+            results[idx] = cached(_resolver_mock)  # type: ignore[arg-type]
+        except BaseException as e:  # noqa: BLE001 - captured and asserted on after join
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(n_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+    assert not any(t.is_alive() for t in threads), 'deadlock detected'
+    assert not errors, f'unexpected errors in workers: {errors}'
+    assert call_count == 1
+    assert all(r is not None for r in results)
+    assert all(r is results[0] for r in results)
+
+
+@fact
+def concurrent_expiry_refresh_invokes_factory_once() -> None:
+    """After TTL expiry, concurrent callers refresh exactly once and share the new value."""
+    call_count = 0
+
+    def factory(c):  # noqa: ANN201, ARG001
+        nonlocal call_count
+        call_count += 1
+        time.sleep(0.02)  # widen the race window
+        return f'value_{call_count}'
+
+    cached = Cached(factory, ttl=timedelta(seconds=0.05))  # type: ignore[arg-type]
+    first = cached(_resolver_mock)  # type: ignore[arg-type]
+    assert call_count == 1
+    assert first == 'value_1'
+    time.sleep(0.08)  # let the TTL elapse
+
+    n_threads = 16
+    barrier = threading.Barrier(n_threads)
+    results: list[str | None] = [None] * n_threads
+    errors: list[BaseException] = []
+
+    def worker(idx: int) -> None:
+        try:
+            barrier.wait()
+            results[idx] = cached(_resolver_mock)  # type: ignore[arg-type]
+        except BaseException as e:  # noqa: BLE001 - captured and asserted on after join
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(n_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+    assert not any(t.is_alive() for t in threads), 'deadlock detected'
+    assert not errors, f'unexpected errors in workers: {errors}'
+    assert call_count == 2
+    assert all(r is not None for r in results)
+    assert all(r is results[0] for r in results)
+    assert results[0] == 'value_2'

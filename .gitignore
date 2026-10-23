@@ -18,3 +18,4 @@ tmp/
 *cov/
 uv.lock
 .python-version
+.open*
