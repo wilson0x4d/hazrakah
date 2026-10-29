@@ -8,35 +8,42 @@ on:
     paths:
       - '.gitea/workflows/pipeline.yaml'
       - 'src/**'
-      - 'tests/**'
       - 'pyproject.toml'
 jobs:
   package-and-deploy:
     name: "Package & Deploy"
-    runs-on: builder-py311
+    runs-on: builder-py313
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: "Configure"
         id: configure-build
         run: |
-          export SEMVER=$(conventional-semver)
-          echo "SEMVER=$SEMVER" >> "$GITHUB_ENV"
-          echo "PYPI_REPO=${{ vars.PYPI_REPO }}" >> "$GITHUB_ENV"
-          PYTHON_VERSION=3.11 .scripts/init-venv
+          . .scripts/init-venv
+          echo "SEMVER=$(conventional-semver)" >> "$GITHUB_ENV"
       - name: "Test"
         id: run-tests
         run: |
-          .scripts/run-tests
+          .scripts/run-tests 3.15
+          .scripts/run-tests 3.14
+          .scripts/run-tests 3.13
+          .scripts/run-tests 3.12
+          .scripts/run-tests 3.11
       - name: "Package"
         id: build-package
         run: |
           .scripts/build-package
       - name: "Deploy"
-        id: deploy-package
+        id: publish-package
+        env:
+          UV_PUBLISH_URL: ${{ vars.PYPI_URL }}
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
         run: |
-          .scripts/deploy-package
+          .scripts/publish-package
+      - name: "Finalize"
+        id: finalize-build
+        run: |
           emit-context "success" "SEMVER" "${{ gitea.api_url }}" "${{ gitea.repository }}" "${{ gitea.sha }}" "${{ secrets.GITEA_TOKEN }}" "$SEMVER"
           git tag "$SEMVER"
           git push origin "$SEMVER"
