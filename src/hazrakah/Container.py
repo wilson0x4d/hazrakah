@@ -15,6 +15,7 @@ import sys
 import threading
 from types import ModuleType, NoneType, TracebackType, UnionType
 from typing import (
+    TYPE_CHECKING,
     _SpecialForm,
     Any,
     Callable,
@@ -29,6 +30,9 @@ from typing import (
     get_origin
 )
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from .lifetime_decorators import DecorationInfo
 
 from .RegistrationError import RegistrationError
 from .ResolutionError import ResolutionError
@@ -85,6 +89,11 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
     any type whether or not it is registered with a Container.  The only practical reason to pre-register
     a type is to assert finer-grained control over instanciation; ie. for specifying lifetime semantics,
     aliasing types, or to configure a factory function.
+
+    Lifetime decorators (``@singleton``, ``@transient``, ``@instanced``) are honored lazily:
+    resolving a type with no standing registration registers it with its declared lifetime.
+    A standing registration always takes precedence over decoration metadata.
+    Resolve-time inspection can be turned off with :meth:`disable_decorators`.
 
     Example (Basic)
     ---------------
@@ -209,6 +218,7 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
     __namespaces: dict[str, Container]
     __namespace: Optional[str]
     __context: ContextVar[Optional[Container]]
+    __decorators_enabled: bool
 
     def __init__(
         self,
@@ -216,7 +226,8 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         frozen: bool = False,
         self_resolve: bool = True,
         namespace: Optional[str] = None,
-        autoclose: bool = True
+        autoclose: bool = True,
+        decorators: bool = True
     ) -> None:
         super().__setattr__('__frozen', False)
         self.__logger = logging.getLogger(__name__)
@@ -229,6 +240,7 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         self.__tracked = set[Any]()
         self.__namespaces = {}
         self.__autoclose = autoclose is not False
+        self.__decorators_enabled = decorators is not False
         self.__context = ContextVar(f'__ctx_{uuid4().hex}', default=None)
         super().__setattr__('__namespace', namespace)
 
@@ -570,20 +582,115 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
                 registration = ns_container.__registrations.get(t)
                 if registration is not None:
                     return ns_container._dispatch_registration(t, registration, ns_container)
-                # If not found in namespace container's own registrations, continue to next in chain
+
+        # No match found in the requested scopes.  Before failing, check whether
+        # *t* carries lifetime-decoration metadata for one of the requested
+        # namespaces and lazily materialize that registration.
+        info = self.__get_decoration_info(t)
+        if info is not None and info.namespace is not None and info.namespace in namespace_chain:
+            self.__register_decorated_namespaced(t, info)
+            ns_container = root._Container__namespaces[info.namespace]  # type: ignore[attr-defined]
+            registration = ns_container.__registrations.get(t)
+            if registration is not None:
+                return ns_container._dispatch_registration(t, registration, ns_container)
 
         # No match found
         raise ResolutionError(f'No registration found for {t!r}')
 
     def _fallback_resolve(self, t: Type[Any]) -> Any:
-        """Handle fallback resolution: concrete auto-reg, self-resolve, or error."""
+        """Handle fallback resolution: decoration discovery, concrete auto-reg, self-resolve, or error."""
         if t in (Container, DependencyRegistry, DependencyResolver, ScopedDependencyResolver):
             if self.__self_resolve is True:
                 return cast(Any, self)
-        elif self.__is_concrete(t):
+            raise ResolutionError(f'No registration found for {t!r}')
+        info = self.__get_decoration_info(t)
+        if info is not None and info.namespace is None:
+            return self.__resolve_decorated(t, info)
+        if info is not None:
+            # Namespaced decoration: materialize the registration in the named
+            # namespace scope as a side effect; the current (non-namespaced)
+            # resolution continues with the standard behavior below.
+            self.__register_decorated_namespaced(t, info)
+        if self.__is_concrete(t):
             self.register_transient(t)
             return self.resolve(t)
         raise ResolutionError(f'No registration found for {t!r}')
+
+    def __get_decoration_info(self, t: Type[Any]) -> Optional[DecorationInfo]:
+        """
+        Look up lifetime-decorator metadata for *t*.
+
+        The interface-keyed store is checked first (``@singleton`` / ``@singleton(types=IFoo)``),
+        then the target-keyed index (``@singleton(types=IFoo) class Foo`` resolved via ``Foo``).
+        Returns ``None`` when *t* carries no decoration metadata or when resolve-time
+        decoration inspection has been disabled on this container.
+        """
+        if not self.__decorators_enabled:
+            return None
+        # Import lazily to avoid circular import at module load time.
+        from .lifetime_decorators import _DecorationInfoManager
+        manager = _DecorationInfoManager.instance()
+        return manager.get(t) or manager.get_for_target(t)
+
+    def __resolve_decorated(self, t: Type[Any], info: DecorationInfo) -> Any:
+        """Register *t* per the discovered non-namespaced *info* and resolve it."""
+        match info.lifetime:
+            case Lifetime.INSTANCE:
+                if isinstance(info.target, type):
+                    instance = self.__create_instance(
+                        t,
+                        Registration(t=t, lifetime=info.lifetime, target=info.target),
+                    )
+                else:
+                    instance = self.__await_or_block(info.target(self))
+                    self.__tracked.add(instance)
+                self.__register_for_lifetime(t, info.lifetime, instance)
+                return instance
+            case Lifetime.SINGLETON:
+                self.register_singleton(t, info.target)
+                return self.resolve(t)
+            case _:  # Lifetime.TRANSIENT
+                self.register_transient(t, info.target)
+                return self.resolve(t)
+
+    def __root_namespace_container(self, namespace: str) -> Container:
+        """Return the root container's scope child for *namespace*, creating it if needed.
+
+        Namespace resolution always consults the root container's namespace mapping,
+        so namespace containers must be attached to the root regardless of which
+        scope discovered the decoration.
+        """
+        root: Container = self
+        while root.__outer_scope is not None:
+            root = root.__outer_scope
+        return root.__ensure_namespace_container(namespace)
+
+    def __register_decorated_namespaced(self, t: Type[Any], info: DecorationInfo) -> None:
+        """Materialize *info* in the root container's named namespace scope.
+
+        No re-resolution occurs; the caller's current resolution continues with
+        its own standard behavior.  The materialized registration is discoverable
+        by subsequent resolves whose namespace chain includes *info.namespace*.
+        """
+        namespace = info.namespace
+        if namespace is None:
+            return
+        ns_container = self.__root_namespace_container(namespace)
+        match info.lifetime:
+            case Lifetime.INSTANCE:
+                if isinstance(info.target, type):
+                    instance = self.__create_instance(
+                        t,
+                        Registration(t=t, lifetime=info.lifetime, target=info.target),
+                    )
+                else:
+                    instance = self.__await_or_block(info.target(self))
+                    self.__tracked.add(instance)
+                ns_container.__register_for_lifetime(t, info.lifetime, instance)
+            case Lifetime.SINGLETON:
+                ns_container.register_singleton(t, info.target)
+            case _:  # Lifetime.TRANSIENT
+                ns_container.register_transient(t, info.target)
 
     def __get_singleton_lock(self, cache_key: Any) -> threading.RLock:
         """Return the creation lock for *cache_key*, creating it if needed.
@@ -961,6 +1068,10 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         """
         Create registrations based on discovered decorators ``@singleton``, ``@transient``, and ``@instanced``.
 
+        This method is **not required** for decorators to take effect -- :meth:`resolve` consults
+        decoration metadata lazily for types that have no standing registration.  Use this method
+        for eager up-front registration, filtering, or ``depends_on`` topological ordering.
+
         This method is idempotent -- repeated calls overwrite registrations (last-in-wins).
 
         :param namespace_pattern: A regular expression pattern used to filter which decorated types are registered.
@@ -1130,6 +1241,7 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
         self_resolve: Optional[bool] = None,
         namespace: Optional[str] = None,
         autoclose: Optional[bool] = None,
+        decorators: Optional[bool] = None,
     ) -> Container:
         child = Container(
             outer_scope=self,
@@ -1137,10 +1249,36 @@ class Container(DependencyRegistry, ScopedDependencyResolver, DependencyResolver
             self_resolve=self_resolve if self_resolve is not None else self.__self_resolve,
             namespace=namespace,
             autoclose=autoclose if autoclose is not None else self.__autoclose,
+            decorators=decorators if decorators is not None else self.__decorators_enabled,
         )
         if namespace is not None:
             self.__namespaces[namespace] = child
         return child
+
+    def disable_decorators(self) -> Container:
+        """
+        Disable resolve-time inspection of lifetime-decorator metadata on this container.
+
+        Once disabled, ``resolve()`` no longer consults ``@singleton`` / ``@transient`` /
+        ``@instanced`` metadata for types without a standing registration -- unadorned
+        behavior resumes (concrete types auto-register as transient).  Existing
+        registrations are unaffected, and eager :meth:`register_decorated` still works.
+
+        The flag propagates to containers created via :meth:`create_scope`; a child may
+        override it with ``create_scope(decorators=True)``.
+
+        .. code:: python
+
+            c = Container().disable_decorators()
+
+            @singleton
+            class Foo: ...
+            c.resolve(Foo) is c.resolve(Foo)  # False -- plain transient fallback
+
+        :returns: ``self`` for method chaining.
+        """
+        self.__decorators_enabled = False
+        return self
 
     def freeze(self) -> None:
         """

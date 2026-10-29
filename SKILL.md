@@ -21,6 +21,8 @@ c = Container()
 svc: SomeUnregisteredType = c.resolve(SomeUnregisteredType)  # ← this works, hazrakah auto-wires constructor deps
 ```
 
+Lifetime decorators (`@singleton`, `@transient`, `@instanced`) are **honored lazily**: when `resolve()` encounters a type with no standing registration, it consults the type's decoration metadata and registers it with the declared lifetime before resolving. An explicit registration always takes precedence over decoration.
+
 `register_decorated()` and manual registration methods are **edge-case approaches**, NOT the standard pattern. Never assume a type must be registered before calling `resolve()`.
 
 ---
@@ -58,6 +60,8 @@ c = Container()
 | `outer_scope` | `Optional[Container]` | `None` | Parent container for hierarchical scoping |
 | `frozen` | `bool` | `False` | Block all registrations immediately |
 | `self_resolve` | `bool` | `True` | Allow a container to resolve its own DI interfaces to itself |
+| `autoclose` | `bool` | `True` | Call `.close()` on tracked instances during teardown |
+| `decorators` | `bool` | `True` | Honor lifetime-decorator metadata at resolve time |
 
 ---
 
@@ -264,13 +268,28 @@ class MultiImpl: ...
 ```
 
 When ``register_decorated()`` runs, it routes registrations into the specified
-namespace scopes based on the decoration info.
+namespace scopes based on the decoration info. The lazy resolve path does the same
+for a single type: a plain ``resolve(t)`` materializes the namespaced registration
+as a side effect, and ``resolve(t, namespace=...)`` materializes it on first touch
+when the requested namespace chain includes the decorated namespace.
 
 ---
 
 ## Decorators
 
-Decorators are **passive** — they store metadata. Registration happens via `register_decorated()`.
+Decorators store lifetime metadata. That metadata is consumed in one of two ways:
+
+1. **Lazily, at resolve time** (default) — `resolve()` on a type with no standing
+   registration discovers its decoration and registers it with the declared lifetime
+   (SINGLETON, TRANSIENT, or INSTANCE). `types=` aliases are honored for both the
+   interface and the concrete target, and `namespace=` routes the registration into
+   the named namespace scope (reachable via `resolve(t, namespace=...)`).
+2. **Eagerly, via `register_decorated()`** — registers every decorated type at once,
+   with optional filtering (`namespace_pattern`, `class_pattern`) and `depends_on`
+   topological ordering.
+
+A container can opt out of the lazy path entirely with `disable_decorators()` — see
+below.
 
 ### Core decorators: `@singleton`, `@transient`, `@instanced`
 
@@ -310,7 +329,9 @@ def make_session(r: DependencyResolver) -> Session:
 
 ### `register_decorated()`
 
-Registers all decorated classes/functions in the global namespace:
+Eagerly registers all decorated classes/functions in the global namespace.
+Not required for decorators to take effect — `resolve()` honors decoration lazily —
+but useful for up-front validation, filtering, and `depends_on` ordering:
 
 ```python
 c.register_decorated()  # registers everything decorated
@@ -325,6 +346,23 @@ c.register_decorated(class_pattern="^Service$")
 @singleton(types=ILogger, depends_on=(IConfig,))
 class MyLogger: ...
 ```
+
+### Opting out: `disable_decorators()`
+
+Turns off resolve-time decoration inspection for a container:
+
+```python
+c = Container().disable_decorators()   # chainable
+
+@singleton
+class Foo: ...
+c.resolve(Foo) is c.resolve(Foo)  # False -- plain transient fallback resumes
+```
+
+- The flag propagates to children created via `create_scope()`; a child can override
+  it with `create_scope(decorators=True)`. The constructor accepts `decorators=False`
+  directly.
+- Existing registrations are unaffected, and eager `register_decorated()` still works.
 
 ### `@provides(*interfaces)`
 

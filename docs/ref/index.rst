@@ -7,4 +7,5 @@ Reference
    hazrakah
    scopes
    namespaces
+   decorators
 

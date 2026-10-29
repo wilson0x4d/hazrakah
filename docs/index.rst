@@ -19,7 +19,7 @@ Features
 - **Hierarchical scoping**; Isolate registrations and/or resolves. optionally use a context manager to deterministically tear down a scope and its resolved objects.
 - **Namespaced Registrations**; Register types into named scopes and resolve with priority chains. Allows multiple implementations of the same interface to coexist.
 - **Protocols, ABCs, and Concretes** can be registered against **Factory Functions and Concretes**.
-- **Lifetime Decorators**; (OPTIONAL) Types decorated with  ``@singleton``, ``@transient`` or ``@instanced`` can be registered with a single call to ``register_decorated()``, simplifying orchestration.
+- **Lifetime Decorators**; (OPTIONAL) Types decorated with ``@singleton``, ``@transient`` or ``@instanced`` are honored at resolve time, or registered eagerly with a single call to ``register_decorated()``, simplifying orchestration.
 - **Implicit Multi-Registration**; Types decorated with ``@provides`` bind to all provided types (unless explicit types are specified during registration.)
 - **Fluent API**; All registration methods return ``self``, enabling method-chained container setup.
 - **Time-bound Caching**; The ``Cached[T]`` generic type wraps a zero-argument factory so its result is produced once and re-used until the TTL window elapses.

@@ -96,7 +96,9 @@ All registration methods return ``self``, enabling method-chained container setu
 Lifetime Decorators
 ~~~~~~~~~~~~~~~~~~~
 
-Mark intent at class-definition time with ``@singleton``, ``@transient``, or ``@instanced``, then register everything in one call.
+Mark intent at class-definition time with ``@singleton``, ``@transient``, or ``@instanced``.
+The declared lifetime is honored lazily -- ``resolve()`` consults the decoration for any
+type that has no standing registration -- so ``register_decorated()`` is optional:
 
 .. code-block:: python
 
@@ -109,7 +111,7 @@ Mark intent at class-definition time with ``@singleton``, ``@transient``, or ``@
     class BarService: ...
 
     c = Container()
-    c.register_decorated()            # discovers all decorated classes
+    # c.register_decorated()  # optional: eager registration with filtering
 
     assert c.resolve(IFoo) is c.resolve(IFoo)     # singleton
     assert c.resolve(IBar) is not c.resolve(IBar)  # transient

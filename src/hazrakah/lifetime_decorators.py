@@ -67,6 +67,7 @@ class _DecorationInfoManager:
 
     __instance: Optional[_DecorationInfoManager] = None
     __store: dict[type, DecorationInfo] = {}
+    __by_target: dict[Any, list[DecorationInfo]] = {}
 
     @classmethod
     def instance(cls) -> _DecorationInfoManager:
@@ -82,8 +83,10 @@ class _DecorationInfoManager:
         If the existing entry has a different lifetime a :class:`RegistrationError`
         is raised -- one lifetime per interface is enforced.
         """
-        if info.interface in _DecorationInfoManager.__store:
-            existing = _DecorationInfoManager.__store[info.interface]
+        store = _DecorationInfoManager.__store
+        by_target = _DecorationInfoManager.__by_target
+        if info.interface in store:
+            existing = store[info.interface]
             if existing.lifetime is not info.lifetime:
                 raise RegistrationError(
                     f'cannot both decorate interface {info.interface.__name__!r} as '
@@ -95,7 +98,39 @@ class _DecorationInfoManager:
                 info.interface,
                 existing.target.__name__,
             )
-        _DecorationInfoManager.__store[info.interface] = info
+            stale = by_target.get(existing.target)
+            if stale is not None:
+                stale.remove(existing)
+                if not stale:
+                    del by_target[existing.target]
+        store[info.interface] = info
+        by_target.setdefault(info.target, []).append(info)
+
+    def get(self, interface: type) -> Optional[DecorationInfo]:
+        """Return the stored entry for *interface*, or ``None`` when absent."""
+        return _DecorationInfoManager.__store.get(interface)
+
+    def get_for_target(self, target: Any) -> Optional[DecorationInfo]:
+        """
+        Return a stored entry whose *target* is the given class.
+
+        A single target may back several entries (e.g. ``types=(IFoo, IBar)``).
+        They must all agree on lifetime for the target-level decoration to be
+        unambiguous; on conflict a warning is logged and ``None`` is returned.
+        """
+        infos = _DecorationInfoManager.__by_target.get(target)
+        if not infos:
+            return None
+        lifetime = infos[0].lifetime
+        if not all(i.lifetime is lifetime for i in infos):
+            logger.warning(
+                'Conflicting lifetimes declared for target %s (%s); '
+                'ignoring target-level decoration.',
+                getattr(target, '__name__', repr(target)),
+                ', '.join(sorted({i.lifetime.name for i in infos})),
+            )
+            return None
+        return infos[0]
 
     def get_all(self) -> list[DecorationInfo]:
         """Return a snapshot of all stored entries."""
@@ -106,6 +141,7 @@ class _DecorationInfoManager:
         """Clear all stored decoration info. For testing use only."""
         cls.__instance = None
         cls.__store.clear()
+        cls.__by_target.clear()
 
 
 _HAZRAKAH_LIFETIME_ATTR = '__hazrakah_lifetime'

@@ -113,7 +113,11 @@ Lifetime decorators accept a ``namespace`` parameter:
        pass
 
 When ``register_decorated()`` runs, it routes registrations into the specified
-namespace scopes based on the decoration info.
+namespace scopes based on the decoration info. The lazy resolve path does the same
+for a single type: a plain ``resolve(t)`` materializes the namespaced registration
+as a side effect (the type still resolves as transient in the default scope), and
+``resolve(t, namespace=...)`` materializes it on first touch when the requested
+namespace chain includes the decorated namespace.
 
 Frozen Propagation
 ------------------
